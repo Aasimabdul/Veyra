@@ -19,6 +19,24 @@ android {
         versionName = "0.1.0"
     }
 
+    // Release builds require a keystore supplied outside the repository.
+    // The release workflow decodes the owner-managed Actions secret into this path.
+    signingConfigs {
+        create("release") {
+            storeFile = System.getenv("ANDROID_KEYSTORE_PATH")?.let { file(it) }
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+            keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+        }
+    }
+
     // GeckoView ships a large native engine (libxul.so) per CPU architecture. Build one APK
     // per ABI instead of one huge multi-ABI APK:
     //   app-arm64-v8a-debug.apk    -> 64-bit ARM phones
