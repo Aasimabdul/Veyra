@@ -44,12 +44,22 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required repository Actions secret: $name"
-              exit 1
-            fi
-          done
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::Missing required repository Actions secret: ANDROID_KEYSTORE_BASE64"
+            exit 1
+          fi
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "::error::Missing required repository Actions secret: ANDROID_KEYSTORE_PASSWORD"
+            exit 1
+          fi
+          if [ -z "$ANDROID_KEY_ALIAS" ]; then
+            echo "::error::Missing required repository Actions secret: ANDROID_KEY_ALIAS"
+            exit 1
+          fi
+          if [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::Missing required repository Actions secret: ANDROID_KEY_PASSWORD"
+            exit 1
+          fi
           keystore="$RUNNER_TEMP/veyra-release.jks"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
           test -s "$keystore"
