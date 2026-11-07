@@ -39,7 +39,7 @@ class MainActivity : AppCompatActivity() {
         }
         address = EditText(this).apply {
             hint = "Search or enter address"
-            singleLine = true
+            setSingleLine(true)
             setTextColor(Color.WHITE)
             setHintTextColor(Color.LTGRAY)
             setBackgroundColor(Color.rgb(16, 30, 49))
