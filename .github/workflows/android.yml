@@ -80,13 +80,15 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -camera-front none
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -camera-back none -camera-front none
+          emulator-boot-timeout: 600
           disable-animations: true
           script: |
             set -euo pipefail
             apk="android/app/build/outputs/apk/debug/app-x86_64-debug.apk"
             test -s "$apk"
             adb wait-for-device
+            adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
             adb install -r "$apk"
             adb shell am start -W -n com.veyra.browser/.MainActivity
             sleep 8
