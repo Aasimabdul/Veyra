@@ -348,8 +348,13 @@ class MainActivity : AppCompatActivity() {
         if (history.isNotEmpty()) {
             contentArea.addView(chip("Clear session history", 44) {
                 history.clear()
+                session.purgeHistory()
                 showHistory()
-                Toast.makeText(this, "Session history cleared", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this@MainActivity,
+                    "Session and back/forward history cleared",
+                    Toast.LENGTH_SHORT
+                ).show()
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
             ).apply { bottomMargin = dp(12) })
