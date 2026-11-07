@@ -230,9 +230,20 @@ class MainActivity : AppCompatActivity() {
         toolbar.addView(address, LinearLayout.LayoutParams(0, dp(44), 1f))
         toolbar.addView(chip("↻", 38) { if (currentUrl.isNotBlank()) session.reload() })
         overlay.addView(toolbar)
-        overlay.addView(chip("←", 42) {
+        val navigationControls = row()
+        navigationControls.addView(chip("←", 42) {
             session.goBack()
+        }.apply {
+            contentDescription = "Go back"
+        }, LinearLayout.LayoutParams(dp(48), dp(44)).apply {
+            marginEnd = dp(8)
         })
+        navigationControls.addView(chip("→", 42) {
+            session.goForward()
+        }.apply {
+            contentDescription = "Go forward"
+        }, LinearLayout.LayoutParams(dp(48), dp(44)))
+        overlay.addView(navigationControls)
         contentArea.addView(overlay)
         contentArea.visibility = View.VISIBLE
         geckoView.visibility = View.VISIBLE
