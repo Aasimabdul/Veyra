@@ -33,7 +33,7 @@ This repository is an early preview, not a privacy-hardened daily-use browser. T
 ### Not implemented or not verified
 - No lock screen, PIN, biometric gate, or protected-tabs mechanism.
 - No real multi-tab management or isolated private-browsing sessions.
-- No comprehensive ad blocker, configurable tracker categories, cookie controls, or anti-fingerprinting protections. The basic GeckoView tracking-protection toggle is awaiting CI and live-behavior verification.
+- No comprehensive ad blocker, configurable tracker categories, cookie controls, or anti-fingerprinting protections. The basic GeckoView tracking-protection toggle passed CI run #37, but live tracker-blocking behavior remains unverified.
 - Downloads are a placeholder screen; a download manager is not implemented.
 - Remaining settings rows are presentation-only; only the tracking-protection toggle is wired to browser behavior in the current source.
 - The quick-link “Add” action is a placeholder.
