@@ -103,7 +103,12 @@ class MainActivity : AppCompatActivity() {
 
         val header = row()
         header.addView(label("Veyra", 25, true), LinearLayout.LayoutParams(0, dp(52), 1f))
-        header.addView(chip("◉", 42) { showSettings() })
+        header.addView(chip("☆", 42) { showBookmarks() }.apply {
+            contentDescription = "Open bookmarks"
+        })
+        header.addView(chip("◉", 42) { showSettings() }.apply {
+            contentDescription = "Open settings"
+        })
         contentArea.addView(header)
 
         val brand = column().apply {
