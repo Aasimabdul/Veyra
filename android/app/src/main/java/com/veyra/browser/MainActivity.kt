@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var address: EditText
     private lateinit var contentArea: LinearLayout
     private lateinit var root: LinearLayout
+    private var bottomNav: LinearLayout? = null
     private var currentPage = "home"
     private var currentUrl = ""
     private val history = linkedSetOf<String>()
@@ -375,7 +376,8 @@ class MainActivity : AppCompatActivity() {
                 marginStart = dp(3); marginEnd = dp(3)
             })
         }
-        root.removeView(nav)
+        bottomNav?.let { root.removeView(it) }
+        bottomNav = nav
         root.addView(nav, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(56)
         ).apply { topMargin = dp(8); bottomMargin = dp(4) })
