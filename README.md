@@ -28,13 +28,14 @@ This repository is an early preview, not a privacy-hardened daily-use browser. T
 - Session history is kept in memory and is lost when the process is recreated.
 - Bookmarks are saved in app-private preferences on this device, with no sync. The code passed the general Android CI build and emulator smoke test, but bookmark persistence has no dedicated automated behavior test or physical-device verification yet.
 - Address-bar input resolution routes valid HTTP(S) URLs and domain names to navigation, and treats ordinary text or unsupported URI schemes as search text. The focused unit tests, including the `localhost:8080` regression, passed in [Android CI run #35](https://github.com/Aasimabdul/Veyra/actions/runs/42376990810). This confirms the resolver's unit tests, not broader browser security or physical-device behavior.
+- A tracking-protection toggle is now wired to GeckoView's built-in anti-tracking categories, defaults to enabled, and persists the user's choice in app-private preferences. The code change is awaiting Android CI verification; no live tracker-blocking test has been run. This is not a comprehensive ad blocker.
 
 ### Not implemented or not verified
 - No lock screen, PIN, biometric gate, or protected-tabs mechanism.
 - No real multi-tab management or isolated private-browsing sessions.
-- No configurable tracker/ad blocking, cookie controls, or anti-fingerprinting protections.
+- No comprehensive ad blocker, configurable tracker categories, cookie controls, or anti-fingerprinting protections. The basic GeckoView tracking-protection toggle is awaiting CI and live-behavior verification.
 - Downloads are a placeholder screen; a download manager is not implemented.
-- Settings rows are presentation-only; the listed privacy and appearance controls do not change browser behavior.
+- Remaining settings rows are presentation-only; only the tracking-protection toggle is wired to browser behavior in the current source.
 - The quick-link “Add” action is a placeholder.
 - No VPN or built-in video/audio downloader.
 - No desktop web-rendering engine; the Windows/Linux target is only a C++ shell scaffold.
