@@ -2,7 +2,7 @@
 
 Veyra is an open-source browser project targeting **Android, Windows, and Linux**.
 
-> **Development status:** starter scaffold only. This is not yet a production-ready browser, and no installable APK/release has been verified.
+> **Development status:** early preview, not a production-ready browser. CI has successfully built ABI-specific debug APKs and installed/launched the x86_64 APK in an API 35 emulator. No production-signed release has been published.
 
 ## Platforms
 
@@ -13,7 +13,9 @@ Veyra is an open-source browser project targeting **Android, Windows, and Linux*
 
 ## Android build
 
-Open the `android/` folder in Android Studio, use JDK 17, install Android SDK 35, then sync and run the `app` configuration. The first Gradle build requires internet access to download dependencies.
+Open the `android/` folder in Android Studio with JDK 17. Install Android SDK platform `37.2` and Build Tools `36.0.0`, then sync and run the `app` configuration. CI uses Gradle `9.6.0`. The first Gradle build requires internet access to download dependencies.
+
+CI currently verifies separate `arm64-v8a`, `armeabi-v7a`, and `x86_64` debug APKs, checks package metadata, ZIP alignment and APK signatures, installs/launches the x86_64 build in an API 35 emulator, then runs unit tests and Android lint. These are debug artifacts, retained for 14 days; they are not production-signed releases. Download available artifacts from the [GitHub Actions runs](https://github.com/Aasimabdul/Veyra/actions/workflows/android.yml).
 
 ## Current implementation status
 
