@@ -6,9 +6,21 @@ on:
     paths: ["android/**", ".github/workflows/android.yml"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_VERSION: "9.6.0"   # minimum Gradle for AGP 9.5.0
+  BUILD_TOOLS_VERSION: "36.0.0"
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -18,51 +30,45 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
       - name: Install required Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+        run: sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;${BUILD_TOOLS_VERSION}"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
-      - name: Show Android SDK configuration
+          gradle-version: ${{ env.GRADLE_VERSION }}
+      - name: Show toolchain diagnostics
         run: |
+          java -version
           echo "ANDROID_HOME=$ANDROID_HOME"
           sdkmanager --list_installed
-      - name: Discover compatible dependency versions (diagnostic)
-        continue-on-error: true
-        run: |
-          echo "== Available SDK platforms / build-tools"
-          sdkmanager --list 2>/dev/null | grep -E "platforms;android-(3[5-9]|4)|build-tools;(3[5-9]|4)" | sort -u | head -40
-          python3 -m venv /tmp/v && /tmp/v/bin/pip install --quiet remotezip
-          /tmp/v/bin/python - <<'PY'
-          import re, urllib.request
-          from remotezip import RemoteZip
-
-          def versions(url):
-              xml = urllib.request.urlopen(url, timeout=60).read().decode()
-              return re.findall(r"<version>([^<]+)</version>", xml)
-
-          def check(root, group, artifact, n):
-              vs = versions(f"{root}/{group}/{artifact}/maven-metadata.xml")
-              print(f"== {group}/{artifact}: {len(vs)} versions, newest {vs[-3:]}")
-              for v in vs[-n:]:
-                  url = f"{root}/{group}/{artifact}/{v}/{artifact}-{v}.aar"
-                  try:
-                      with RemoteZip(url) as z:
-                          props = z.read("META-INF/com/android/build/gradle/aar-metadata.properties").decode()
-                      kv = dict(l.split("=", 1) for l in props.splitlines() if "=" in l)
-                      print(f"  {v}  minCompileSdk={kv.get('minCompileSdk')}  minAGP={kv.get('minAndroidGradlePluginVersion')}")
-                  except Exception as e:
-                      print(f"  {v}  ERR {type(e).__name__}: {e}")
-
-          check("https://maven.mozilla.org/maven2", "org/mozilla/geckoview", "geckoview", 30)
-          check("https://dl.google.com/dl/android/maven2", "androidx/core", "core-ktx", 14)
-          check("https://dl.google.com/dl/android/maven2", "androidx/appcompat", "appcompat", 4)
-          print("== AGP versions:", versions("https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/maven-metadata.xml")[-12:])
-          PY
+          gradle --version
       - name: Build debug APK
         working-directory: android
         run: gradle assembleDebug --stacktrace
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          apk=$(ls android/app/build/outputs/apk/debug/*.apk | head -n1)
+          test -s "$apk"
+          ls -l "$apk"
+          aapt2="$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}/aapt2"
+          "$aapt2" dump badging "$apk" | grep -E "^(package|sdkVersion|targetSdkVersion|application-label):"
+          "$aapt2" dump badging "$apk" | grep -q "package: name='com.veyra.browser'"
       - uses: actions/upload-artifact@v4
-        if: success()
         with:
-          name: veyra-android-debug
+          name: veyra-android-debug-${{ github.run_number }}
           path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Unit tests
+        working-directory: android
+        run: gradle testDebugUnitTest --stacktrace
+      - name: Android lint
+        working-directory: android
+        run: gradle lintDebug --stacktrace
+      - name: Upload lint report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veyra-lint-report-${{ github.run_number }}
+          path: android/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 7
