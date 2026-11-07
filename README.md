@@ -26,7 +26,8 @@ This repository is an early preview, not a privacy-hardened daily-use browser. T
 - Basic page navigation, reload, and a back action.
 - Neumorphic dark navy/cyan home, browsing, and navigation surfaces.
 - Session history is kept in memory and is lost when the process is recreated.
-- Bookmarks are saved in app-private preferences on this device, with no sync. The persistence change is awaiting CI verification.
+- Bookmarks are saved in app-private preferences on this device, with no sync. The code passed the general Android CI build and emulator smoke test, but bookmark persistence has no dedicated automated behavior test or physical-device verification yet.
+- Address-bar input resolution now routes valid HTTP(S) URLs and domain names to navigation, and treats ordinary text or unsupported URI schemes as search text. Focused unit tests were added; CI verification is pending.
 
 ### Not implemented or not verified
 - No lock screen, PIN, biometric gate, or protected-tabs mechanism.
