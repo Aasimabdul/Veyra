@@ -17,6 +17,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // GeckoView ships native engine libs per CPU architecture. Keeping only 64-bit ARM
+        // (virtually all current phones) cuts the APK from ~530 MB to well under 200 MB.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     compileOptions {

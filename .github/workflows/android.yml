@@ -48,7 +48,8 @@ jobs:
           set -euo pipefail
           apk=$(ls android/app/build/outputs/apk/debug/*.apk | head -n1)
           test -s "$apk"
-          ls -l "$apk"
+          ls -lh "$apk"
+          unzip -l "$apk" | grep -E "lib/[^/]+/libxul.so" || true
           aapt2="$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}/aapt2"
           "$aapt2" dump badging "$apk" | grep -E "^(package|sdkVersion|targetSdkVersion|application-label):"
           "$aapt2" dump badging "$apk" | grep -q "package: name='com.veyra.browser'"
