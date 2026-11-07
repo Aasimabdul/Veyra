@@ -345,8 +345,22 @@ class MainActivity : AppCompatActivity() {
         contentArea.visibility = View.VISIBLE
         contentArea.removeAllViews()
         contentArea.addView(label("History", 24, true).apply { setPadding(0, dp(12), 0, dp(18)) })
-        if (history.isEmpty()) contentArea.addView(label("Pages you visit in this session appear here.", 13, false, muted))
-        history.toList().reversed().forEach { url -> contentArea.addView(chip(url, 52) { navigate(url) }) }
+        if (history.isNotEmpty()) {
+            contentArea.addView(chip("Clear session history", 44) {
+                history.clear()
+                showHistory()
+                Toast.makeText(this, "Session history cleared", Toast.LENGTH_SHORT).show()
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
+            ).apply { bottomMargin = dp(12) })
+        }
+        if (history.isEmpty()) {
+            contentArea.addView(label("Pages you visit in this session appear here.", 13, false, muted))
+        } else {
+            history.toList().reversed().forEach { url ->
+                contentArea.addView(chip(url, 52) { navigate(url) })
+            }
+        }
         addBottomNav("history")
     }
 
