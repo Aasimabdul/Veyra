@@ -26,6 +26,38 @@ jobs:
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
           sdkmanager --list_installed
+      - name: Discover compatible dependency versions (diagnostic)
+        continue-on-error: true
+        run: |
+          echo "== Available SDK platforms / build-tools"
+          sdkmanager --list 2>/dev/null | grep -E "platforms;android-(3[5-9]|4)|build-tools;(3[5-9]|4)" | sort -u | head -40
+          python3 -m venv /tmp/v && /tmp/v/bin/pip install --quiet remotezip
+          /tmp/v/bin/python - <<'PY'
+          import re, urllib.request
+          from remotezip import RemoteZip
+
+          def versions(url):
+              xml = urllib.request.urlopen(url, timeout=60).read().decode()
+              return re.findall(r"<version>([^<]+)</version>", xml)
+
+          def check(root, group, artifact, n):
+              vs = versions(f"{root}/{group}/{artifact}/maven-metadata.xml")
+              print(f"== {group}/{artifact}: {len(vs)} versions, newest {vs[-3:]}")
+              for v in vs[-n:]:
+                  url = f"{root}/{group}/{artifact}/{v}/{artifact}-{v}.aar"
+                  try:
+                      with RemoteZip(url) as z:
+                          props = z.read("META-INF/com/android/build/gradle/aar-metadata.properties").decode()
+                      kv = dict(l.split("=", 1) for l in props.splitlines() if "=" in l)
+                      print(f"  {v}  minCompileSdk={kv.get('minCompileSdk')}  minAGP={kv.get('minAndroidGradlePluginVersion')}")
+                  except Exception as e:
+                      print(f"  {v}  ERR {type(e).__name__}: {e}")
+
+          check("https://maven.mozilla.org/maven2", "org/mozilla/geckoview", "geckoview", 30)
+          check("https://dl.google.com/dl/android/maven2", "androidx/core", "core-ktx", 14)
+          check("https://dl.google.com/dl/android/maven2", "androidx/appcompat", "appcompat", 4)
+          print("== AGP versions:", versions("https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/maven-metadata.xml")[-12:])
+          PY
       - name: Build debug APK
         working-directory: android
         run: gradle assembleDebug --stacktrace
