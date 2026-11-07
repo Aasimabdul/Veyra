@@ -27,7 +27,7 @@ This repository is an early preview, not a privacy-hardened daily-use browser. T
 - Neumorphic dark navy/cyan home, browsing, and navigation surfaces.
 - Session history is kept in memory and is lost when the process is recreated.
 - Bookmarks are saved in app-private preferences on this device, with no sync. The code passed the general Android CI build and emulator smoke test, but bookmark persistence has no dedicated automated behavior test or physical-device verification yet.
-- Address-bar input resolution now routes valid HTTP(S) URLs and domain names to navigation, and treats ordinary text or unsupported URI schemes as search text. Focused unit tests were added; CI verification is pending.
+- Address-bar input resolution routes valid HTTP(S) URLs and domain names to navigation, and treats ordinary text or unsupported URI schemes as search text. The focused unit tests, including the `localhost:8080` regression, passed in [Android CI run #35](https://github.com/Aasimabdul/Veyra/actions/runs/42376990810). This confirms the resolver's unit tests, not broader browser security or physical-device behavior.
 
 ### Not implemented or not verified
 - No lock screen, PIN, biometric gate, or protected-tabs mechanism.
