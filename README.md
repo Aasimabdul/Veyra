@@ -17,6 +17,8 @@ Open the `android/` folder in Android Studio with JDK 17. Install Android SDK pl
 
 CI currently verifies separate `arm64-v8a`, `armeabi-v7a`, and `x86_64` debug APKs, checks package metadata, ZIP alignment and APK signatures, installs/launches the x86_64 build in an API 35 emulator, then runs unit tests and Android lint. These are debug artifacts, retained for 14 days; they are not production-signed releases. Download available artifacts from the [GitHub Actions runs](https://github.com/Aasimabdul/Veyra/actions/workflows/android.yml).
 
+A manually triggered **Android Release Candidate** workflow is now available in GitHub Actions. It is designed to build and verify signed ABI-specific release APKs plus an Android App Bundle, then upload them as a temporary workflow artifact; it does **not** publish a GitHub Release. It requires the repository owner to configure these Actions secrets: `ANDROID_KEYSTORE_BASE64` (base64-encoded signing keystore), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. Keep the keystore and passwords out of the repository. The workflow has not yet been run, so production signing and release packaging are still unverified.
+
 ## Current implementation status
 
 This repository is an early preview, not a privacy-hardened daily-use browser. The following describes the current source code, not planned features.
