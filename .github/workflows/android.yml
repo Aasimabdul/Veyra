@@ -84,7 +84,7 @@ jobs:
           emulator-boot-timeout: 600
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             apk="android/app/build/outputs/apk/debug/app-x86_64-debug.apk"
             test -s "$apk"
             adb wait-for-device
