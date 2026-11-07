@@ -1,0 +1,12 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+# Native build
+cmake-build-*/
+out/
+# OS
+.DS_Store
+Thumbs.db
