@@ -5,7 +5,8 @@
 - [x] Android GeckoView starter activity
 - [x] Desktop C++ shell scaffold
 - [x] Initial CI workflows
-- [ ] Verify Android dependency resolution and build on CI/device
+- [x] Verify Android dependency resolution, three ABI debug APKs, emulator install/launch, unit tests, and lint on CI
+- [ ] Verify installability and stability on physical Android devices
 
 ## Phase 1 — usable Android browser
 - [ ] Back, forward, reload, and home controls
