@@ -95,7 +95,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, dp(16), 0, dp(22))
         }
         brand.addView(label("V", 54, true, cyan).apply { gravity = Gravity.CENTER })
-        brand.addView(label("Private · Fast · Minimal", 13, false, muted).apply {
+        brand.addView(label("Minimal · Fast · Open-source", 13, false, muted).apply {
             gravity = Gravity.CENTER
         })
         contentArea.addView(brand)
@@ -194,7 +194,7 @@ class MainActivity : AppCompatActivity() {
             background = surface(panel, 24)
             setPadding(dp(10), dp(3), dp(6), dp(3))
         }
-        toolbar.addView(label("🔒", 15, true, cyan))
+        toolbar.addView(label("◉", 15, true, cyan))
         address = EditText(this).apply {
             setSingleLine(true)
             textSize = 13f
