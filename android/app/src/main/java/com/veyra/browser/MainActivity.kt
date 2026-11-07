@@ -14,7 +14,10 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
+import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
 import org.json.JSONArray
@@ -40,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     private var bottomNav: LinearLayout? = null
     private var currentPage = "home"
     private var currentUrl = ""
+    private var trackingProtectionEnabled = true
     private val history = linkedSetOf<String>()
     private val bookmarks = linkedSetOf<String>()
 
@@ -49,8 +53,20 @@ class MainActivity : AppCompatActivity() {
         window.navigationBarColor = navy
         window.decorView.systemUiVisibility = 0
 
-        runtime = GeckoRuntime.create(this)
-        session = GeckoSession()
+        val contentBlockingSettings = ContentBlocking.Settings.Builder()
+            .antiTracking(ContentBlocking.AntiTracking.DEFAULT)
+            .build()
+        runtime = GeckoRuntime.create(
+            this,
+            GeckoRuntimeSettings.Builder()
+                .contentBlocking(contentBlockingSettings)
+                .build()
+        )
+        trackingProtectionEnabled = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
+            .getBoolean("tracking_protection_enabled", true)
+        session = GeckoSession().apply {
+            settings.setUseTrackingProtection(trackingProtectionEnabled)
+        }
         session.open(runtime)
         geckoView = GeckoView(this).apply {
             setSession(this@MainActivity.session)
@@ -350,9 +366,42 @@ class MainActivity : AppCompatActivity() {
         contentArea.visibility = View.VISIBLE
         contentArea.removeAllViews()
         contentArea.addView(label("Settings", 24, true).apply { setPadding(0, dp(12), 0, dp(18)) })
+        val trackingCard = row().apply {
+            background = surface(panel, 20)
+            elevation = dp(3).toFloat()
+            setPadding(dp(16), dp(12), dp(12), dp(12))
+        }
+        val trackingDescription = column()
+        trackingDescription.addView(label("Tracking protection", 14, true))
+        trackingDescription.addView(label(
+            "Blocks known tracker resources. This is not a full ad blocker.",
+            11, false, muted
+        ).apply { setPadding(0, dp(4), dp(8), 0) })
+        trackingCard.addView(trackingDescription, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+        ))
+        trackingCard.addView(SwitchCompat(this).apply {
+            isChecked = trackingProtectionEnabled
+            contentDescription = "Enable tracking protection"
+            setOnCheckedChangeListener { _, enabled ->
+                trackingProtectionEnabled = enabled
+                session.settings.setUseTrackingProtection(enabled)
+                getSharedPreferences("veyra_preferences", MODE_PRIVATE).edit()
+                    .putBoolean("tracking_protection_enabled", enabled)
+                    .apply()
+                Toast.makeText(
+                    this@MainActivity,
+                    if (enabled) "Tracking protection enabled" else "Tracking protection disabled",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        })
+        contentArea.addView(trackingCard, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(10) })
+
         listOf(
             "General" to "Home, tabs, browsing behavior",
-            "Privacy & Security" to "Tracking prevention, cookies, private mode",
             "Downloads" to "Location and download behavior",
             "Appearance" to "Neumorphic UI, themes and accent colors",
             "About Veyra" to "Open-source browser"
