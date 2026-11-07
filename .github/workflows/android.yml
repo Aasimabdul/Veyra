@@ -73,6 +73,15 @@ jobs:
             fi
           done
           ls -lh "$dir"/*.apk
+      - name: Grant the runner access to KVM
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::/dev/kvm is unavailable; the Android emulator smoke test requires KVM."
+            exit 1
+          fi
+          sudo chown "$(id -un)" /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
       - name: Install and launch APK in Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -82,6 +91,7 @@ jobs:
           profile: pixel_2
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -camera-back none -camera-front none
           emulator-boot-timeout: 600
+          disable-linux-hw-accel: false
           disable-animations: true
           script: |
             set -eu
