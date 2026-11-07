@@ -52,7 +52,7 @@ class MainActivity : AppCompatActivity() {
         session = GeckoSession()
         session.open(runtime)
         geckoView = GeckoView(this).apply {
-            setSession(session)
+            setSession(this@MainActivity.session)
             visibility = View.GONE
         }
 
@@ -213,7 +213,7 @@ class MainActivity : AppCompatActivity() {
         toolbar.addView(chip("↻", 38) { if (currentUrl.isNotBlank()) session.reload() })
         overlay.addView(toolbar)
         overlay.addView(chip("←", 42) {
-            if (session.canGoBack()) session.goBack() else showHome()
+            session.goBack()
         })
         contentArea.addView(overlay)
         contentArea.visibility = View.VISIBLE
@@ -424,7 +424,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onBackPressed() {
         when {
-            currentPage == "browse" && session.canGoBack() -> session.goBack()
+            currentPage == "browse" -> { showHome() }
             currentPage != "home" -> showHome()
             else -> super.onBackPressed()
         }
