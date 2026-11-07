@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.veyra.browser"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.veyra.browser"
@@ -23,7 +23,7 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
 }
