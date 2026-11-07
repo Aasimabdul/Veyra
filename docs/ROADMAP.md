@@ -30,4 +30,5 @@ Legend: `[x]` complete, `[~]` partial, `[ ]` not implemented.
 - [ ] Automated UI smoke tests
 - [ ] Signed Windows packaging
 - [ ] Linux AppImage and DEB packaging
-- [ ] Android APK/AAB release workflow
+- [~] Manual Android release-candidate workflow added; configure the four owner-managed signing secrets and run it to verify signed APKs/AAB
+- [ ] Publish a first Android APK/AAB GitHub release after feature and device testing
