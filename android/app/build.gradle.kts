@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.veyra.browser"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.veyra.browser"
