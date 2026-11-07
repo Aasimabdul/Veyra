@@ -76,6 +76,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun showHome() {
         currentPage = "home"
+        contentArea.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        )
         geckoView.visibility = View.GONE
         contentArea.visibility = View.VISIBLE
         contentArea.removeAllViews()
@@ -176,7 +179,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showBrowser() {
         currentPage = "browse"
-        contentArea.visibility = View.GONE
+        contentArea.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        contentArea.visibility = View.VISIBLE
         geckoView.visibility = View.VISIBLE
         contentArea.removeAllViews()
 
