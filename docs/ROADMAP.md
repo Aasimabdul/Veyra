@@ -15,7 +15,7 @@ Legend: `[x]` complete, `[~]` partial, `[ ]` not implemented.
 - [~] Tabs screen is a placeholder for one browsing session; no multi-tab manager
 - [ ] Downloads and permission UX
 - [ ] Private sessions
-- [~] Bookmarks persist locally; history is in-memory only
+- [~] Bookmarks persist locally; history is in-memory only, with a clear-history control awaiting CI verification in run #38
 - [~] GeckoView built-in tracking-protection toggle, default on; implementation passed CI run #37 (build, APK checks, emulator launch, unit tests, lint); live tracker-blocking and physical-device validation pending; not a full ad blocker
 - [ ] Accessibility and crash testing
 
