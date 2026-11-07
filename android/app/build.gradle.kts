@@ -4,7 +4,12 @@ plugins {
 
 android {
     namespace = "com.veyra.browser"
-    compileSdk = 37
+    // GeckoView 159 requires compile SDK 37.2 (platforms;android-37.2)
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
 
     defaultConfig {
         applicationId = "com.veyra.browser"

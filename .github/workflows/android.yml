@@ -30,7 +30,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
       - name: Install required Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;${BUILD_TOOLS_VERSION}"
+        run: sdkmanager "platform-tools" "platforms;android-37.2" "build-tools;${BUILD_TOOLS_VERSION}"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
