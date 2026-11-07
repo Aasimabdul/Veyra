@@ -47,7 +47,10 @@ jobs:
         run: |
           set -euo pipefail
           dir=android/app/build/outputs/apk/debug
-          aapt2="$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}/aapt2"
+          tools="$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION}"
+          aapt2="$tools/aapt2"
+          apksigner="$tools/apksigner"
+          zipalign="$tools/zipalign"
           max_bytes=$((150 * 1024 * 1024))   # per-APK size limit: 150 MB
           for abi in arm64-v8a armeabi-v7a; do
             apk="$dir/app-$abi-debug.apk"
@@ -57,6 +60,13 @@ jobs:
             unzip -l "$apk" | grep -E "lib/[^/]+/libxul.so" || true
             "$aapt2" dump badging "$apk" | grep -E "^(package|sdkVersion|targetSdkVersion|application-label|native-code):"
             "$aapt2" dump badging "$apk" | grep -q "package: name='com.veyra.browser'"
+            # Catch malformed, misaligned, or unsigned/corrupt APKs before publishing artifacts.
+            "$zipalign" -c -v 4 "$apk"
+            "$apksigner" verify --verbose --print-certs "$apk"
+            case "$abi" in
+              arm64-v8a) "$aapt2" dump badging "$apk" | grep -q "native-code: 'arm64-v8a'" ;;
+              armeabi-v7a) "$aapt2" dump badging "$apk" | grep -q "native-code: 'armeabi-v7a'" ;;
+            esac
             if [ "$size" -gt "$max_bytes" ]; then
               echo "::error::$apk is larger than 150 MB"; exit 1
             fi
