@@ -25,7 +25,8 @@ This repository is an early preview, not a privacy-hardened daily-use browser. T
 - A GeckoView-based single browsing session with URL/search input.
 - Basic page navigation, reload, and a back action.
 - Neumorphic dark navy/cyan home, browsing, and navigation surfaces.
-- In-memory session history and bookmarks; these are lost when the process is recreated.
+- Session history is kept in memory and is lost when the process is recreated.
+- Bookmarks are saved in app-private preferences on this device, with no sync. The persistence change is awaiting CI verification.
 
 ### Not implemented or not verified
 - No lock screen, PIN, biometric gate, or protected-tabs mechanism.
