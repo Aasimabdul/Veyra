@@ -17,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
+import org.json.JSONArray
 import java.net.URLEncoder
 
 /**
@@ -72,6 +73,7 @@ class MainActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
         setContentView(root)
+        loadBookmarks()
         showHome()
     }
 
@@ -278,7 +280,8 @@ class MainActivity : AppCompatActivity() {
         contentArea.addView(chip("＋  Bookmark current page", 48) {
             if (currentUrl.isNotBlank()) {
                 bookmarks.add(currentUrl)
-                Toast.makeText(this, "Bookmark saved for this session", Toast.LENGTH_SHORT).show()
+                persistBookmarks()
+                Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
                 showBookmarks()
             } else Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
         })
@@ -286,10 +289,45 @@ class MainActivity : AppCompatActivity() {
             contentArea.addView(label("Your saved pages will appear here.", 13, false, muted).apply {
                 setPadding(dp(4), dp(18), 0, 0)
             })
-        } else bookmarks.forEach { url ->
-            contentArea.addView(chip(url, 54) { navigate(url) })
+        } else bookmarks.toList().forEach { url ->
+            val itemRow = row()
+            itemRow.addView(chip(url, 48) { navigate(url) }, LinearLayout.LayoutParams(
+                0, dp(52), 1f
+            ).apply { marginEnd = dp(8); bottomMargin = dp(8) })
+            itemRow.addView(chip("×", 48) {
+                bookmarks.remove(url)
+                persistBookmarks()
+                showBookmarks()
+            }, LinearLayout.LayoutParams(dp(48), dp(52)).apply {
+                bottomMargin = dp(8)
+            })
+            contentArea.addView(itemRow)
         }
         addBottomNav("bookmarks")
+    }
+
+    private fun loadBookmarks() {
+        val raw = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
+            .getString("bookmarks", "[]") ?: "[]"
+        try {
+            val saved = JSONArray(raw)
+            for (index in 0 until saved.length()) {
+                val url = saved.optString(index, "")
+                if (url.startsWith("https://") || url.startsWith("http://")) {
+                    bookmarks.add(url)
+                }
+            }
+        } catch (_: Exception) {
+            // Ignore malformed preferences rather than preventing the browser from opening.
+        }
+    }
+
+    private fun persistBookmarks() {
+        val saved = JSONArray()
+        bookmarks.forEach { saved.put(it) }
+        getSharedPreferences("veyra_preferences", MODE_PRIVATE).edit()
+            .putString("bookmarks", saved.toString())
+            .apply()
     }
 
     private fun showHistory() {
