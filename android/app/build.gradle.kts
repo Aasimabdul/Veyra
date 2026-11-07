@@ -17,11 +17,26 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+    }
 
-        // GeckoView ships native engine libs per CPU architecture. Keeping only 64-bit ARM
-        // (virtually all current phones) cuts the APK from ~530 MB to well under 200 MB.
-        ndk {
-            abiFilters += "arm64-v8a"
+    // GeckoView ships a large native engine (libxul.so) per CPU architecture. Build one APK
+    // per ABI instead of one huge multi-ABI APK:
+    //   app-arm64-v8a-debug.apk    -> 64-bit ARM phones
+    //   app-armeabi-v7a-debug.apk  -> 32-bit ARM phones
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Keep native libs compressed inside the APK so the file itself is much smaller
+            // (they are extracted at install time).
+            useLegacyPackaging = true
         }
     }
 
