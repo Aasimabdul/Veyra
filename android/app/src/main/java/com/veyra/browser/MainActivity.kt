@@ -18,7 +18,6 @@ import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
 import org.json.JSONArray
-import java.net.URLEncoder
 
 /**
  * First Veyra neumorphic UI milestone.
@@ -230,13 +229,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun navigate(raw: String) {
-        val input = raw.trim()
-        if (input.isBlank()) return
-        val uri = when {
-            input.startsWith("https://") || input.startsWith("http://") -> input
-            input.contains('.') && !input.contains(' ') -> "https://$input"
-            else -> "https://www.google.com/search?q=" + URLEncoder.encode(input, "UTF-8")
-        }
+        val uri = AddressResolver.resolve(raw) ?: return
         currentUrl = uri
         history.add(uri)
         try {
