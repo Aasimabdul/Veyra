@@ -16,6 +16,7 @@ Legend: `[x]` complete, `[~]` partial, `[ ]` not implemented.
 - [ ] Downloads and permission UX
 - [ ] Private sessions
 - [~] Bookmarks persist locally; history is in-memory only
+- [~] GeckoView built-in tracking protection toggle, default on; CI and live tracker-blocking validation pending; not a full ad blocker
 - [ ] Accessibility and crash testing
 
 ## Phase 2 — desktop proof of concept
