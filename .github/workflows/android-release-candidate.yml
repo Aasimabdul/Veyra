@@ -71,7 +71,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: gradle :app:assembleRelease :app:bundleRelease --stacktrace
+        run: gradle :app:assembleRelease :app:bundleRelease :app:testDebugUnitTest :app:testReleaseUnitTest :app:lintRelease --stacktrace
 
       - name: Verify signed release artifacts
         run: |
@@ -103,6 +103,41 @@ jobs:
             unzip -l "$aab" | grep -q "base/lib/$abi/libxul.so"
           done
           ls -lh "$dir"/*.apk "$aab"
+
+      - name: Grant the runner access to KVM
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::/dev/kvm is unavailable; the release emulator smoke test requires KVM."
+            exit 1
+          fi
+          sudo chown "$(id -un)" /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+
+      - name: Install and launch signed release APK in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -camera-back none -camera-front none
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: false
+          disable-animations: true
+          script: |
+            apk="$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-x86_64-release.apk"
+            test -s "$apk"
+            adb wait-for-device
+            adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+            adb install -r "$apk"
+            adb shell am start -W -n com.veyra.browser/.MainActivity
+            sleep 8
+            adb shell pidof com.veyra.browser
+            if adb logcat -d -t 5000 | grep -E "FATAL EXCEPTION|Fatal signal"; then
+              echo "::error::Veyra release APK crashed during emulator smoke test"
+              exit 1
+            fi
 
       - uses: actions/upload-artifact@v4
         with:
