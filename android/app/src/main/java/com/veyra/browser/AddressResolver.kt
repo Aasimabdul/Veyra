@@ -28,11 +28,12 @@ internal object AddressResolver {
             return search(input)
         }
 
-        if (hostInput.matches(input) &&
-            (input.contains('.') || input.equals("localhost", ignoreCase = true))
-        ) {
+        if (hostInput.matches(input)) {
             val uri = runCatching { URI("https://$input") }.getOrNull()
-            if (uri != null && !uri.host.isNullOrBlank()) {
+            val host = uri?.host
+            if (!host.isNullOrBlank() &&
+                (host.contains('.') || host.equals("localhost", ignoreCase = true))
+            ) {
                 return uri.normalize().toASCIIString()
             }
         }
