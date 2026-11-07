@@ -9,11 +9,13 @@
 - [ ] Verify installability and stability on physical Android devices
 
 ## Phase 1 — usable Android browser
-- [ ] Back, forward, reload, and home controls
-- [ ] Tabs and tab switcher
+Legend: `[x]` complete, `[~]` partial, `[ ]` not implemented.
+
+- [~] Basic back, reload, and home navigation; forward navigation is not implemented
+- [~] Tabs screen is a placeholder for one browsing session; no multi-tab manager
 - [ ] Downloads and permission UX
 - [ ] Private sessions
-- [ ] Bookmarks and history
+- [~] Bookmarks persist locally; history is in-memory only
 - [ ] Accessibility and crash testing
 
 ## Phase 2 — desktop proof of concept
