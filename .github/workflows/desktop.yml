@@ -117,6 +117,8 @@ jobs:
           ls -lh dist
 
       - name: Build AppImage
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sudo apt-get install -y librsvg2-bin libfuse2
@@ -152,6 +154,10 @@ jobs:
             if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 -o appimagetool "$url"; then break; fi
             rm -f appimagetool
           done
+          if [ ! -s appimagetool ]; then
+            # Fall back to the GitHub API download path if the CDN URL keeps failing.
+            gh release download 1.9.0 -R AppImage/appimagetool -p appimagetool-x86_64.AppImage -O appimagetool --clobber
+          fi
           test -s appimagetool
           chmod +x appimagetool
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run "$appdir" dist/Veyra-x86_64.AppImage
