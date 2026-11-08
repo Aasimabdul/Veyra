@@ -1,450 +1,1004 @@
 package com.veyra.browser
 
-import android.app.AlertDialog
+import android.app.Dialog
+import android.app.KeyguardManager
+import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.core.view.WindowCompat
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.SwitchCompat
+import androidx.core.view.WindowCompat
+import org.json.JSONArray
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
-import org.json.JSONArray
+import org.mozilla.geckoview.StorageController
+import java.text.DateFormat
+import java.util.Date
 
 /**
- * First Veyra neumorphic UI milestone.
- * The home and browsing surfaces are real; advanced browser features are added incrementally.
+ * Veyra Android shell. Every screen follows the neumorphic mockups (see [UiKit]); only features
+ * that actually work are exposed. Multiple tabs, private browsing and the download manager are
+ * not implemented yet and are labelled as such instead of being faked.
  */
 class MainActivity : AppCompatActivity() {
-    private val navy = Color.rgb(7, 17, 31)
-    private val panel = Color.rgb(16, 32, 52)
-    private val panelLight = Color.rgb(24, 45, 69)
-    private val cyan = Color.rgb(57, 190, 255)
-    private val white = Color.rgb(238, 244, 255)
-    private val muted = Color.rgb(160, 180, 204)
+    private data class HistoryEntry(val url: String, var title: String, val time: Long)
 
     private lateinit var runtime: GeckoRuntime
     private lateinit var session: GeckoSession
     private lateinit var geckoView: GeckoView
-    private lateinit var address: EditText
-    private lateinit var contentArea: LinearLayout
     private lateinit var root: LinearLayout
-    private var bottomNav: LinearLayout? = null
+    private lateinit var contentArea: LinearLayout
+    private var bottomBar: View? = null
+    private var urlHost: TextView? = null
+    private var backButton: View? = null
+    private var forwardButton: View? = null
+    private var progressFill: View? = null
     private var currentPage = "home"
     private var currentUrl = ""
+    private var currentTitle = ""
+    private var canGoBack = false
+    private var canGoForward = false
     private var trackingProtectionEnabled = true
-    private val history = linkedSetOf<String>()
+    private val history = ArrayList<HistoryEntry>()
     private val bookmarks = linkedSetOf<String>()
+
+    private var appLockEnabled = false
+    private var locked = false
+    private var authInProgress = false
+    private val unlockLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        authInProgress = false
+        if (result.resultCode == RESULT_OK) {
+            locked = false
+            show(if (currentPage == "lock") "home" else currentPage)
+        } else if (locked) {
+            show("lock")
+        }
+    }
+
+    private val prefs get() = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Keep content within the system-bar safe area on gesture and button navigation.
         WindowCompat.setDecorFitsSystemWindows(window, true)
-        window.statusBarColor = navy
-        window.navigationBarColor = navy
+        window.statusBarColor = Palette.BG
+        window.navigationBarColor = Palette.BG
 
         val contentBlockingSettings = ContentBlocking.Settings.Builder()
             .antiTracking(ContentBlocking.AntiTracking.DEFAULT)
             .build()
         runtime = GeckoRuntime.create(
             this,
-            GeckoRuntimeSettings.Builder()
-                .contentBlocking(contentBlockingSettings)
-                .build()
+            GeckoRuntimeSettings.Builder().contentBlocking(contentBlockingSettings).build()
         )
-        trackingProtectionEnabled = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
-            .getBoolean("tracking_protection_enabled", true)
+        trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
         session = GeckoSession().apply {
             settings.setUseTrackingProtection(trackingProtectionEnabled)
+            navigationDelegate = object : GeckoSession.NavigationDelegate {
+                override fun onLocationChange(
+                    session: GeckoSession,
+                    url: String?,
+                    perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
+                    hasUserGesture: Boolean
+                ) {
+                    if (url.isNullOrBlank() || url == "about:blank") return
+                    currentUrl = url
+                    currentTitle = ""
+                    if (history.lastOrNull()?.url != url) {
+                        history.add(HistoryEntry(url, "", System.currentTimeMillis()))
+                    }
+                    urlHost?.text = hostOf(url)
+                }
+
+                override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
+                    this@MainActivity.canGoBack = canGoBack
+                }
+
+                override fun onCanGoForward(session: GeckoSession, canGoForward: Boolean) {
+                    this@MainActivity.canGoForward = canGoForward
+                    forwardButton?.alpha = if (canGoForward) 1f else 0.4f
+                }
+            }
+            contentDelegate = object : GeckoSession.ContentDelegate {
+                override fun onTitleChange(session: GeckoSession, title: String?) {
+                    if (title.isNullOrBlank()) return
+                    currentTitle = title
+                    history.lastOrNull()?.title = title
+                }
+            }
+            progressDelegate = object : GeckoSession.ProgressDelegate {
+                override fun onProgressChange(session: GeckoSession, progress: Int) {
+                    progressFill?.let { bar ->
+                        val parent = bar.parent as? View
+                        bar.visibility = if (progress in 1..99) View.VISIBLE else View.INVISIBLE
+                        bar.pivotX = 0f
+                        bar.scaleX = progress / 100f
+                        parent?.visibility = View.VISIBLE
+                    }
+                }
+            }
         }
         session.open(runtime)
-        geckoView = GeckoView(this).apply {
-            setSession(this@MainActivity.session)
-            visibility = View.GONE
-        }
+        geckoView = GeckoView(this).apply { setSession(this@MainActivity.session) }
+
+        appLockEnabled = prefs.getBoolean("app_lock_enabled", false) && deviceIsSecure()
+        applySecureFlag()
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(navy)
-            // One consistent outer grid for every screen and the fixed navigation.
-            setPadding(dp(16), dp(12), dp(16), dp(6))
+            setBackgroundColor(Palette.BG)
+            clipChildren = false
             clipToPadding = false
         }
-        contentArea = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        root.addView(contentArea, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
+        contentArea = column()
+        root.addView(contentArea, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        applyGutters()
         loadBookmarks()
-        showHome()
+
+        if (appLockEnabled) {
+            locked = true
+            show("lock")
+            authenticate()
+        } else {
+            show("home")
+        }
+    }
+
+    // ---- lifecycle / lock -------------------------------------------------------------
+
+    override fun onStop() {
+        if (appLockEnabled && !authInProgress) locked = true
+        super.onStop()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (appLockEnabled && locked && !authInProgress && currentPage != "lock") {
+            show("lock")
+            authenticate()
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyGutters()
+    }
+
+    override fun onDestroy() {
+        if (::session.isInitialized) session.close()
+        super.onDestroy()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        when {
+            currentPage == "lock" -> super.onBackPressed()
+            currentPage == "browse" && canGoBack -> session.goBack()
+            currentPage != "home" -> show("home")
+            else -> super.onBackPressed()
+        }
+    }
+
+    private fun deviceIsSecure(): Boolean =
+        getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true
+
+    private fun applySecureFlag() {
+        if (appLockEnabled) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    /** Uses the system credential screen (fingerprint / face / PIN / pattern set on the device). */
+    @Suppress("DEPRECATION")
+    private fun authenticate() {
+        if (authInProgress) return
+        val manager = getSystemService(KeyguardManager::class.java)
+        if (manager == null || !manager.isDeviceSecure) {
+            // The device credential was removed; do not lock the user out of their browser.
+            appLockEnabled = false
+            locked = false
+            prefs.edit().putBoolean("app_lock_enabled", false).apply()
+            applySecureFlag()
+            show("home")
+            return
+        }
+        val intent = manager.createConfirmDeviceCredentialIntent("Unlock Veyra", null)
+        if (intent == null) {
+            Toast.makeText(this, "Device unlock is unavailable", Toast.LENGTH_SHORT).show()
+            return
+        }
+        authInProgress = true
+        unlockLauncher.launch(intent)
+    }
+
+    // ---- layout helpers ---------------------------------------------------------------
+
+    /** 24dp gutter on phones; content is centred at a readable width on tablets. */
+    private fun applyGutters() {
+        val width = resources.displayMetrics.widthPixels
+        val gutter = maxOf(dp(24), (width - dp(640)) / 2)
+        root.setPadding(gutter, dp(16), gutter, dp(0))
+    }
+
+    private fun show(page: String) {
+        when (page) {
+            "home" -> showHome()
+            "search" -> showSearch("")
+            "browse" -> showBrowser()
+            "tabs" -> showTabs()
+            "bookmarks" -> showBookmarks()
+            "history" -> showHistory()
+            "downloads" -> showDownloads()
+            "settings" -> showSettings()
+            "lock" -> showLock()
+            else -> showHome()
+        }
+    }
+
+    private fun resetContent(page: String) {
+        currentPage = page
+        urlHost = null
+        backButton = null
+        forwardButton = null
+        progressFill = null
+        hideKeyboard()
+        contentArea.removeAllViews()
+        bottomBar?.let { root.removeView(it) }
+        bottomBar = null
+    }
+
+    private fun hideKeyboard() {
+        currentFocus?.let {
+            getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(it.windowToken, 0)
+        }
+    }
+
+    /**
+     * Scrolling screen body. The scroller spans the full screen width and the page re-adds the
+     * gutter as padding so raised shadows (which reach ~19dp) are never clipped at the edges.
+     */
+    private fun scrollPage(): LinearLayout {
+        val gutter = root.paddingLeft
+        val scroll = ScrollView(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isVerticalScrollBarEnabled = false
+        }
+        val page = column().apply { setPadding(gutter, dp(8), gutter, dp(28)) }
+        scroll.addView(page, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        contentArea.addView(scroll, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+            leftMargin = -gutter
+            rightMargin = -gutter
+        })
+        return page
+    }
+
+    private fun screenHeader(title: String, action: View? = null) {
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(label(title, 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (action != null) header.addView(action)
+        contentArea.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    private fun emptyState(paths: List<String>, title: String, message: String): View =
+        column().apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(8), dp(36), dp(8), 0)
+            addView(well(icon(paths, Palette.ACCENT, 26), 72, 24))
+            addView(label(title, 16f, Palette.TEXT, 1).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(22), 0, 0)
+            })
+            addView(label(message, 13f, Palette.MUTED).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(12), dp(8), dp(12), 0)
+            })
+        }
+
+    private fun spacer(heightDp: Int) = View(this).apply {
+        layoutParams = lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(heightDp))
+    }
+
+    private fun gap(view: View, bottomDp: Int = 14): View {
+        view.layoutParams = (view.layoutParams as? LinearLayout.LayoutParams
+            ?: lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)).apply {
+            bottomMargin = dp(bottomDp)
+        }
+        return view
+    }
+
+    private fun matchWrap() =
+        lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+    // ---- bottom bars ------------------------------------------------------------------
+
+    private fun addMainNav(selected: String) {
+        val nav = row().apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(8), 0, dp(8), 0)
+            neu(this, 28, Depth.CARD)
+        }
+        data class NavItem(val key: String, val paths: List<String>, val description: String)
+        listOf(
+            NavItem("home", Icons.HOME, "Home"),
+            NavItem("tabs", Icons.TABS, "Tabs"),
+            NavItem("bookmarks", Icons.BOOKMARK, "Bookmarks"),
+            NavItem("downloads", Icons.DOWNLOAD, "Downloads"),
+            NavItem("settings", Icons.SETTINGS, "Settings")
+        ).forEach { item ->
+            val active = item.key == selected
+            val slot = FrameLayout(this).apply {
+                clipChildren = false
+                contentDescription = item.description
+                isClickable = true
+                setOnClickListener { show(item.key) }
+            }
+            val well = LinearLayout(this).apply {
+                gravity = Gravity.CENTER
+                if (active) neu(this, 18, Depth.WELL, inset = true)
+            }
+            well.addView(icon(item.paths, if (active) Palette.ACCENT else Palette.MUTED, 22))
+            slot.addView(well, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER))
+            nav.addView(slot, lp(0, dp(72), 1f))
+        }
+        attachBottomBar(nav)
+    }
+
+    private fun addBrowserBar() {
+        val bar = row().apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(8), 0, dp(8), 0)
+            neu(this, 28, Depth.CARD)
+        }
+        fun cell(paths: List<String>, description: String, color: Int, action: () -> Unit): View =
+            LinearLayout(this).apply {
+                gravity = Gravity.CENTER
+                contentDescription = description
+                isClickable = true
+                setOnClickListener { action() }
+                addView(icon(paths, color, 22))
+            }
+        val back = cell(Icons.BACK, "Back", Palette.MUTED) {
+            if (canGoBack) session.goBack() else show("home")
+        }
+        val forward = cell(Icons.FORWARD, "Forward", Palette.MUTED) {
+            if (canGoForward) session.goForward()
+        }.apply { alpha = if (canGoForward) 1f else 0.4f }
+        backButton = back
+        forwardButton = forward
+        val share = cell(Icons.SHARE, "Share page", Palette.MUTED) {
+            if (currentUrl.isNotBlank()) {
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, currentUrl)
+                }, "Share page"))
+            }
+        }
+        val tabs = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            contentDescription = "Tabs, 1 open"
+            isClickable = true
+            setOnClickListener { show("tabs") }
+            addView(label("1", 12f, Palette.ACCENT, 1).apply {
+                gravity = Gravity.CENTER
+                neu(this, 8, Depth.KNOB, inset = true)
+                layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
+            })
+        }
+        val menu = cell(Icons.MENU, "Menu", Palette.MUTED) { showBrowserMenu() }
+        listOf(back, forward, share, tabs, menu).forEach { view ->
+            bar.addView(view, lp(0, dp(48), 1f))
+        }
+        attachBottomBar(bar)
+    }
+
+    private fun attachBottomBar(bar: View) {
+        bottomBar = bar
+        root.addView(bar, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(72)).apply {
+            topMargin = dp(12)
+            bottomMargin = dp(20)
+            leftMargin = 0
+            rightMargin = 0
+        })
+    }
+
+    // ---- screens ----------------------------------------------------------------------
+
+    private fun showLock() {
+        resetContent("lock")
+        contentArea.gravity = Gravity.CENTER_HORIZONTAL
+        contentArea.addView(label("Veyra", 22f, Palette.TEXT, 1).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(24), 0, 0)
+        }, matchWrap())
+        val center = column().apply { gravity = Gravity.CENTER }
+        val tile = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            contentDescription = "Unlock Veyra"
+            setOnClickListener { authenticate() }
+            neu(this, 56, Depth.CARD, pressable = true)
+        }
+        tile.addView(icon(Icons.FINGERPRINT, Palette.ACCENT, 56))
+        center.addView(tile, lp(dp(132), dp(132)))
+        center.addView(label("Touch to unlock", 18f, Palette.TEXT, 1).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(36), 0, 0)
+        }, matchWrap())
+        center.addView(label("Your tabs are protected. Uses your device fingerprint, PIN or pattern.", 13f, Palette.MUTED).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(8), dp(24), 0)
+        }, matchWrap())
+        contentArea.addView(center, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
     private fun showHome() {
-        currentPage = "home"
-        contentArea.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        )
-        geckoView.visibility = View.GONE
-        contentArea.visibility = View.VISIBLE
-        contentArea.removeAllViews()
+        resetContent("home")
+        contentArea.gravity = Gravity.NO_GRAVITY
+        val page = scrollPage()
 
-        // All home content lives in a scroll container; bottom navigation remains fixed.
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            clipToPadding = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-        }
-        val page = column().apply { setPadding(0, dp(4), 0, dp(18)) }
-        scroll.addView(page, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        contentArea.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-
-        val header = row().apply {
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(48)
-        }
-        header.addView(label("Veyra", 26, true), LinearLayout.LayoutParams(0, dp(48), 1f))
-        header.addView(chip("☆", 42) { showBookmarks() }.apply {
-            contentDescription = "Open bookmarks"
-        }, LinearLayout.LayoutParams(dp(46), dp(44)).apply { marginEnd = dp(8) })
-        header.addView(chip("⚙", 42) { showSettings() }.apply {
-            contentDescription = "Open settings"
-        }, LinearLayout.LayoutParams(dp(46), dp(44)))
-        page.addView(header)
-
-        val brand = column().apply {
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            setPadding(0, dp(16), 0, dp(18))
-        }
-        brand.addView(label("V", 58, true, cyan).apply {
-            gravity = Gravity.CENTER
-            setShadowLayer(dp(12).toFloat(), 0f, 0f, Color.rgb(0, 110, 255))
-        })
-        brand.addView(label("Minimal · Fast · Private", 13, false, muted).apply {
-            gravity = Gravity.CENTER
-            setPadding(0, dp(3), 0, 0)
-        })
-        page.addView(brand)
-
-        address = EditText(this).apply {
-            hint = "⌕  Search or enter URL"
-            setSingleLine(true)
-            textSize = 15f
-            setTextColor(white)
-            setHintTextColor(muted)
-            background = surface(panelLight, 30)
-            imeOptions = EditorInfo.IME_ACTION_GO
-            setPadding(dp(18), dp(14), dp(18), dp(14))
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_VARIATION_URI
-            setOnFocusChangeListener { _, focused ->
-                if (focused && currentPage == "home") showSearch()
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(label("Veyra", 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(iconButton(Icons.LOCK, if (appLockEnabled) "Lock Veyra now" else "Set up app lock") {
+            if (appLockEnabled) {
+                locked = true
+                show("lock")
+                authenticate()
+            } else {
+                show("settings")
             }
+        })
+        page.addView(header, matchWrap())
+
+        val search = row().apply {
+            setPadding(dp(20), 0, dp(20), 0)
+            contentDescription = "Search or enter address"
+            setOnClickListener { showSearch("") }
+            neu(this, 30, Depth.FIELD, inset = true)
+        }
+        search.addView(icon(Icons.SEARCH, Palette.ACCENT, 20))
+        search.addView(label("Search or enter address", 15f, Palette.MUTED).apply {
+            setPadding(dp(14), 0, 0, 0)
+        })
+        page.addView(search, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply {
+            topMargin = dp(24); bottomMargin = dp(28)
+        })
+
+        page.addView(label("Quick access".uppercase(), 11f, Palette.MUTED, 1).apply {
+            letterSpacing = 0.12f
+            setPadding(dp(4), 0, 0, dp(14))
+        }, matchWrap())
+        val shortcuts = mutableListOf(
+            Triple("Y", "YouTube", "https://m.youtube.com"),
+            Triple("G", "Google", "https://google.com"),
+            Triple("G", "GitHub", "https://github.com"),
+            Triple("R", "Reddit", "https://reddit.com"),
+            Triple("X", "X", "https://x.com")
+        )
+        shortcuts.addAll(loadQuickShortcuts().map { Triple(it[1].take(1), it[1], it[2]) })
+        shortcuts.add(Triple("+", "Add", ""))
+        shortcuts.chunked(4).forEach { group ->
+            val line = row().apply { gravity = Gravity.TOP }
+            repeat(4) { index ->
+                val item = group.getOrNull(index)
+                if (item == null) {
+                    line.addView(View(this), lp(0, 1, 1f))
+                    return@repeat
+                }
+                val tile = column().apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    contentDescription = if (item.third.isBlank()) "Add quick access" else item.second
+                    setOnClickListener {
+                        if (item.third.isNotBlank()) navigate(item.third) else showAddShortcutSheet()
+                    }
+                    isClickable = true
+                }
+                val face = LinearLayout(this).apply {
+                    gravity = Gravity.CENTER
+                    neu(this, 20, Depth.BUTTON, pressable = true)
+                    isClickable = false
+                    isDuplicateParentStateEnabled = true
+                    if (item.third.isBlank()) addView(icon(Icons.PLUS, Palette.ACCENT, 22))
+                    else addView(label(item.first.uppercase(), 18f, Palette.ACCENT, 1).apply { gravity = Gravity.CENTER })
+                }
+                tile.addView(face, lp(dp(60), dp(60)))
+                tile.addView(label(item.second, 12f, Palette.MUTED).apply {
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, dp(10), 0, 0)
+                }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                line.addView(tile, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            page.addView(line, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(22)
+            })
+        }
+
+        val hasPage = currentUrl.isNotBlank()
+        val chevron = icon(Icons.CHEVRON, Palette.MUTED, 18)
+        page.addView(
+            listRow(
+                well(icon(Icons.TABS, Palette.ACCENT, 22)),
+                "Continue browsing",
+                if (hasPage) (currentTitle.ifBlank { hostOf(currentUrl) }) else "No page open yet",
+                chevron
+            ) { if (hasPage) show("browse") else showSearch("") },
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
+        )
+        addMainNav("home")
+    }
+
+    private fun showSearch(prefill: String) {
+        resetContent("search")
+        val page = scrollPage()
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(iconButton(Icons.BACK, "Back") { show(if (currentUrl.isBlank()) "home" else "browse") })
+        header.addView(label("Search", 22f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
+        page.addView(header, matchWrap())
+
+        val input = EditText(this).apply {
+            hint = "Search or enter address"
+            setHintTextColor(Palette.MUTED)
+            setTextColor(Palette.TEXT)
+            textSize = 15f
+            setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_GO
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setPadding(dp(22), 0, dp(22), 0)
+            setText(prefill)
+            neu(this, 28, Depth.FIELD, inset = true)
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_NULL) {
                     navigate(text.toString()); true
                 } else false
             }
         }
-        page.addView(address, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)
-        ).apply { bottomMargin = dp(24) })
-
-        page.addView(label("QUICK ACCESS", 11, true, muted).apply {
-            letterSpacing = .14f
-            setPadding(dp(4), 0, 0, dp(12))
+        page.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply {
+            topMargin = dp(20); bottomMargin = dp(28)
         })
-        val shortcuts = mutableListOf(
-            listOf("▶", "YouTube", "https://m.youtube.com"),
-            listOf("G", "Google", "https://google.com"),
-            listOf("●", "GitHub", "https://github.com"),
-            listOf("◉", "Reddit", "https://reddit.com"),
-            listOf("𝕏", "X", "https://x.com")
-        )
-        shortcuts.addAll(loadQuickShortcuts())
-        shortcuts.add(listOf("+", "Add", ""))
-        shortcuts.chunked(3).forEach { group ->
-            val line = row().apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-            }
-            group.forEach { item ->
-                val tile = column().apply {
-                    gravity = Gravity.CENTER
-                    background = surface(panel, 22)
-                    elevation = dp(3).toFloat()
-                    setPadding(dp(4), dp(10), dp(4), dp(10))
-                    minimumWidth = 0
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        if (item[2].isNotBlank()) {
-                            navigate(item[2])
-                        } else {
-                            showAddShortcutDialog()
-                        }
-                    }
+        page.addView(label("QUICK SEARCH", 11f, Palette.MUTED, 1).apply {
+            letterSpacing = 0.12f
+            setPadding(dp(4), 0, 0, dp(14))
+        }, matchWrap())
+        listOf(
+            Triple("Google", "google.com", "https://google.com"),
+            Triple("DuckDuckGo", "duckduckgo.com", "https://duckduckgo.com"),
+            Triple("Wikipedia", "wikipedia.org", "https://wikipedia.org")
+        ).forEach { (name, host, url) ->
+            page.addView(
+                listRow(well(icon(Icons.SEARCH, Palette.ACCENT, 20)), name, host) { navigate(url) },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(14)
                 }
-                tile.addView(label(item[0], 23, true, cyan).apply {
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30)))
-                tile.addView(label(item[1], 11, false, white).apply {
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(20)))
-                line.addView(tile, LinearLayout.LayoutParams(0, dp(82), 1f).apply {
-                    marginStart = dp(4)
-                    marginEnd = dp(4)
-                    bottomMargin = dp(10)
-                })
-            }
-            page.addView(line)
+            )
         }
-
-        val continueCard = row().apply {
-            gravity = Gravity.CENTER_VERTICAL
-            background = surface(panel, 24)
-            elevation = dp(3).toFloat()
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            isClickable = true
-            isFocusable = true
-            setOnClickListener {
-                if (currentUrl.isNotBlank()) navigate(currentUrl)
-                else address.requestFocus()
-            }
-        }
-        continueCard.addView(label("▣", 22, true, cyan).apply {
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-        }, LinearLayout.LayoutParams(dp(32), dp(40)).apply { marginEnd = dp(12) })
-        val continueText = column().apply { minimumWidth = 0 }
-        continueText.addView(label("Continue browsing", 15, true).apply {
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        })
-        continueText.addView(label(
-            if (currentUrl.isBlank()) "Your last visited page appears here" else currentUrl,
-            12, false, muted
-        ).apply {
-            setPadding(0, dp(5), 0, 0)
-            maxLines = 2
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        })
-        continueCard.addView(continueText, LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-        ))
-        page.addView(continueCard, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(12) })
-
-        addBottomNav("home")
+        addMainNav("home")
+        input.requestFocus()
+        if (prefill.isNotEmpty()) input.selectAll()
+        getSystemService(InputMethodManager::class.java)?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
     }
 
     private fun showBrowser() {
-        currentPage = "browse"
-        contentArea.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        )
-        contentArea.visibility = View.VISIBLE
-        contentArea.removeAllViews()
-        geckoView.visibility = View.VISIBLE
+        resetContent("browse")
+        contentArea.gravity = Gravity.NO_GRAVITY
 
-        val overlay = column()
-        val toolbar = row().apply {
-            gravity = Gravity.CENTER_VERTICAL
-            background = surface(panel, 24)
-            setPadding(dp(10), dp(3), dp(6), dp(3))
+        val top = row().apply { minimumHeight = dp(52) }
+        val pill = row().apply {
+            setPadding(dp(18), 0, dp(6), 0)
+            contentDescription = "Edit address"
+            setOnClickListener { showSearch(currentUrl) }
+            neu(this, 26, Depth.FIELD, inset = true)
         }
-        toolbar.addView(label("◉", 15, true, cyan))
-        address = EditText(this).apply {
-            setSingleLine(true)
-            textSize = 13f
-            setTextColor(white)
-            setHintTextColor(muted)
-            setBackgroundColor(Color.TRANSPARENT)
-            hint = "Search or enter URL"
-            setPadding(dp(8), dp(10), dp(4), dp(10))
-            imeOptions = EditorInfo.IME_ACTION_GO
-            setText(currentUrl)
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_NULL) {
-                    navigate(text.toString()); true
-                } else false
-            }
+        pill.addView(icon(Icons.LOCK, Palette.ACCENT, 16))
+        urlHost = label(hostOf(currentUrl), 14f, Palette.TEXT, 1).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(12), 0, dp(8), 0)
         }
-        toolbar.addView(address, LinearLayout.LayoutParams(0, dp(44), 1f))
-        toolbar.addView(chip("↻", 38) { if (currentUrl.isNotBlank()) session.reload() })
-        overlay.addView(toolbar)
-        val navigationControls = row()
-        navigationControls.addView(chip("←", 42) {
-            session.goBack()
-        }.apply {
-            contentDescription = "Go back"
-        }, LinearLayout.LayoutParams(dp(48), dp(44)).apply {
-            marginEnd = dp(8)
+        pill.addView(urlHost, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val reload = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            contentDescription = "Reload page"
+            isClickable = true
+            setOnClickListener { session.reload() }
+            addView(icon(Icons.RELOAD, Palette.MUTED, 18))
+        }
+        pill.addView(reload, lp(dp(40), dp(40)))
+        top.addView(pill, lp(0, dp(52), 1f).apply { rightMargin = dp(14) })
+        top.addView(trackerShield())
+        contentArea.addView(top, matchWrap())
+
+        // Thin progress track under the address row.
+        val track = FrameLayout(this).apply { visibility = View.INVISIBLE }
+        val fill = View(this).apply {
+            setBackgroundColor(Palette.ACCENT)
+            pivotX = 0f
+            scaleX = 0f
+        }
+        track.addView(fill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)))
+        progressFill = fill
+        contentArea.addView(track, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)).apply {
+            topMargin = dp(10); bottomMargin = dp(6)
         })
-        navigationControls.addView(chip("→", 42) {
-            session.goForward()
-        }.apply {
-            contentDescription = "Go forward"
-        }, LinearLayout.LayoutParams(dp(48), dp(44)))
-        overlay.addView(navigationControls)
-        contentArea.addView(overlay, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { bottomMargin = dp(6) })
-        // Keep the web renderer inside the content column so the toolbar, page and bottom
-        // navigation have separate, predictable layout bounds on different screen sizes.
-        contentArea.addView(geckoView, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+
+        (geckoView.parent as? ViewGroup)?.removeView(geckoView)
+        contentArea.addView(geckoView, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        addBrowserBar()
+    }
+
+    private fun trackerShield(): View {
+        val button = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            setOnClickListener { setTrackingProtection(!trackingProtectionEnabled); show("browse"); session.reload() }
+            neu(this, 18, Depth.BUTTON, pressable = true)
+        }
+        button.contentDescription =
+            if (trackingProtectionEnabled) "Tracker protection on, tap to turn off"
+            else "Tracker protection off, tap to turn on"
+        button.addView(icon(
+            if (trackingProtectionEnabled) Icons.SHIELD else Icons.SHIELD_OFF,
+            if (trackingProtectionEnabled) Palette.ACCENT else Palette.MUTED, 22
         ))
-        addBottomNav("browse")
+        button.layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
+        return button
     }
 
     private fun navigate(raw: String) {
-        val uri = AddressResolver.resolve(raw) ?: return
+        val uri = AddressResolver.resolve(raw) ?: run {
+            Toast.makeText(this, "Enter a valid address or search term", Toast.LENGTH_SHORT).show()
+            return
+        }
         currentUrl = uri
-        history.add(uri)
+        currentTitle = ""
         try {
             session.loadUri(uri)
-            showBrowser()
+            show("browse")
         } catch (_: Exception) {
             Toast.makeText(this, "Could not open that address", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun showTabs() {
-        currentPage = "tabs"
-        geckoView.visibility = View.GONE
-        contentArea.visibility = View.VISIBLE
-        contentArea.removeAllViews()
-        contentArea.addView(label("Tabs", 24, true).apply { setPadding(0, dp(12), 0, dp(20)) })
-        val card = column().apply {
-            background = surface(panel, 24)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+        resetContent("tabs")
+        val page = scrollPage()
+        val open = if (currentUrl.isBlank()) 0 else 1
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(label("Tabs", 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(label("$open open", 13f, Palette.MUTED))
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(22)
+        })
+        if (open == 0) {
+            page.addView(emptyState(Icons.TABS, "No open tabs", "Search or pick a quick access tile to open a page."))
+        } else {
+            val title = currentTitle.ifBlank { hostOf(currentUrl) }
+            val close = iconButton(Icons.CLOSE, "Close tab", Palette.MUTED, 40, 14) {
+                currentUrl = ""; currentTitle = ""; canGoBack = false; canGoForward = false
+                session.loadUri("about:blank")
+                showTabs()
+            }
+            page.addView(
+                listRow(letterWell(title), title, hostOf(currentUrl), close) { show("browse") },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
+            )
         }
-        card.addView(label(if (currentUrl.isBlank()) "New tab" else currentUrl, 15, true))
-        card.addView(label("Current browsing session", 12, false, muted).apply {
-            setPadding(0, dp(6), 0, dp(12))
-        })
-        card.addView(chip("Open current tab", 44) {
-            if (currentUrl.isNotBlank()) showBrowser() else showHome()
-        })
-        contentArea.addView(card)
-        contentArea.addView(label("Multiple independent tabs and private sessions are planned for the next browser milestone.", 13, false, muted).apply {
-            setPadding(dp(4), dp(18), dp(4), 0)
-        })
-        makeContentScrollable()
-        addBottomNav("tabs")
+        page.addView(label(
+            "Multiple tabs and private tabs are not available yet; Veyra keeps one browsing session for now.",
+            12f, Palette.MUTED
+        ).apply { setPadding(dp(4), dp(10), dp(4), 0) }, matchWrap())
+        addMainNav("tabs")
     }
 
     private fun showBookmarks() {
-        currentPage = "bookmarks"
-        geckoView.visibility = View.GONE
-        contentArea.visibility = View.VISIBLE
-        contentArea.removeAllViews()
-        contentArea.addView(label("Bookmarks", 24, true).apply { setPadding(0, dp(12), 0, dp(18)) })
-        contentArea.addView(chip("＋  Bookmark current page", 48) {
+        resetContent("bookmarks")
+        val page = scrollPage()
+        val add = iconButton(Icons.PLUS, "Bookmark current page", Palette.ACCENT) {
             if (currentUrl.isNotBlank()) {
                 bookmarks.add(currentUrl)
                 persistBookmarks()
                 Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
                 showBookmarks()
             } else Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
+        }
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(label("Bookmarks", 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(add)
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(22)
         })
         if (bookmarks.isEmpty()) {
-            contentArea.addView(label("Your saved pages will appear here.", 13, false, muted).apply {
-                setPadding(dp(4), dp(18), 0, 0)
-            })
+            page.addView(emptyState(Icons.BOOKMARK, "No bookmarks yet", "Open a page, then tap + to save it on this device."))
         } else bookmarks.toList().forEach { url ->
-            val itemRow = row()
-            itemRow.addView(chip(url, 48) { navigate(url) }, LinearLayout.LayoutParams(
-                0, dp(52), 1f
-            ).apply { marginEnd = dp(8); bottomMargin = dp(8) })
-            itemRow.addView(chip("×", 48) {
+            val remove = iconButton(Icons.TRASH, "Remove bookmark", Palette.MUTED, 40, 14) {
                 bookmarks.remove(url)
                 persistBookmarks()
                 showBookmarks()
-            }, LinearLayout.LayoutParams(dp(48), dp(52)).apply {
-                bottomMargin = dp(8)
-            })
-            contentArea.addView(itemRow)
+            }
+            page.addView(
+                listRow(well(icon(Icons.BOOKMARK, Palette.ACCENT, 20, filled = true), 48, 16), hostOf(url), url, remove) {
+                    navigate(url)
+                },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) }
+            )
         }
-        makeContentScrollable()
-        addBottomNav("bookmarks")
+        addMainNav("bookmarks")
     }
 
-    private fun showAddShortcutDialog() {
-        val form = column().apply { setPadding(dp(4), dp(4), dp(4), dp(4)) }
-        val nameInput = EditText(this).apply {
-            hint = "Shortcut name"
-            setSingleLine(true)
-            setTextColor(white)
-            setHintTextColor(muted)
+    private fun showHistory() {
+        resetContent("history")
+        val page = scrollPage()
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(iconButton(Icons.BACK, "Back") { show("settings") })
+        header.addView(label("History", 22f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) },
+            lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (history.isNotEmpty()) {
+            header.addView(iconButton(Icons.TRASH, "Clear session history") {
+                history.clear()
+                session.purgeHistory()
+                Toast.makeText(this, "Session history cleared", Toast.LENGTH_SHORT).show()
+                showHistory()
+            })
         }
-        val urlInput = EditText(this).apply {
-            hint = "https://example.com"
-            setSingleLine(true)
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_VARIATION_URI
-            setTextColor(white)
-            setHintTextColor(muted)
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(22)
+        })
+        if (history.isEmpty()) {
+            page.addView(emptyState(Icons.CLOCK, "Nothing here yet", "Pages you visit in this session appear here. History is not saved after you close Veyra."))
+        } else {
+            val timeFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
+            history.toList().reversed().forEach { entry ->
+                page.addView(
+                    listRow(
+                        well(icon(Icons.CLOCK, Palette.MUTED, 20)),
+                        entry.title.ifBlank { hostOf(entry.url) },
+                        hostOf(entry.url),
+                        label(timeFormat.format(Date(entry.time)), 12f, Palette.MUTED)
+                    ) { navigate(entry.url) },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
+                )
+            }
         }
-        form.addView(nameInput, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
+        addMainNav("settings")
+    }
+
+    private fun showDownloads() {
+        resetContent("downloads")
+        val page = scrollPage()
+        page.addView(label("Downloads", 22f, Palette.TEXT, 1).apply { minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL },
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(22) })
+        page.addView(emptyState(
+            Icons.DOWNLOAD, "No downloads yet",
+            "The download manager is not built yet, so file downloads are not available in this preview."
         ))
-        form.addView(urlInput, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
-        ).apply { topMargin = dp(8) })
-        AlertDialog.Builder(this)
-            .setTitle("Add quick access")
-            .setView(form)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Save") { _, _ ->
-                val name = nameInput.text.toString().trim()
-                val resolved = AddressResolver.resolve(urlInput.text.toString().trim())
-                if (name.isBlank() || resolved == null ||
+        addMainNav("downloads")
+    }
+
+    private fun showSettings() {
+        resetContent("settings")
+        val page = scrollPage()
+        page.addView(label("Settings", 22f, Palette.TEXT, 1).apply { minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL },
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(22) })
+
+        fun switchRow(paths: List<String>, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+            val toggle = NeuSwitch(this).apply {
+                this.checked = checked
+                this.onChange = onChange
+                contentDescription = title
+            }
+            page.addView(
+                listRow(well(icon(paths, Palette.ACCENT, 20)), title, subtitle, toggle),
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) }
+            )
+        }
+        fun actionRow(paths: List<String>, title: String, subtitle: String, onClick: () -> Unit) {
+            page.addView(
+                listRow(well(icon(paths, Palette.ACCENT, 20)), title, subtitle, icon(Icons.CHEVRON, Palette.MUTED, 18), onClick),
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) }
+            )
+        }
+
+        switchRow(Icons.SHIELD, "Tracking protection", "Blocks known trackers. Not a full ad blocker.", trackingProtectionEnabled) {
+            setTrackingProtection(it)
+        }
+        val secure = deviceIsSecure()
+        switchRow(
+            Icons.LOCK, "App lock",
+            if (secure) "Ask for your device unlock when returning to Veyra." else "Set a screen lock in Android settings first.",
+            appLockEnabled && secure
+        ) { enabled -> setAppLock(enabled) }
+        actionRow(Icons.CLOCK, "History", "Pages visited this session") { show("history") }
+        actionRow(Icons.TRASH, "Clear browsing data", "Cookies, cache, site data and history") { confirmClearData() }
+        actionRow(Icons.INFO, "About Veyra", "Version, engine and licence") { showAbout() }
+        addMainNav("settings")
+    }
+
+    // ---- actions ----------------------------------------------------------------------
+
+    private fun setTrackingProtection(enabled: Boolean) {
+        trackingProtectionEnabled = enabled
+        session.settings.setUseTrackingProtection(enabled)
+        prefs.edit().putBoolean("tracking_protection_enabled", enabled).apply()
+    }
+
+    private fun setAppLock(enabled: Boolean) {
+        if (enabled && !deviceIsSecure()) {
+            Toast.makeText(this, "Set a screen lock in Android settings first", Toast.LENGTH_LONG).show()
+            show("settings")
+            return
+        }
+        appLockEnabled = enabled
+        prefs.edit().putBoolean("app_lock_enabled", enabled).apply()
+        applySecureFlag()
+        Toast.makeText(this, if (enabled) "App lock enabled" else "App lock disabled", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun confirmClearData() {
+        showConfirmSheet(
+            "Clear browsing data?",
+            "This removes cookies, cache, site data and this session's history. Bookmarks and quick access stay.",
+            "Clear"
+        ) {
+            history.clear()
+            session.purgeHistory()
+            runtime.storageController.clearData(StorageController.ClearFlags.ALL)
+            Toast.makeText(this, "Browsing data cleared", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showAbout() {
+        val version = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+        } catch (_: Exception) { "" }
+        showSheet { sheet ->
+            sheet.addView(label("About Veyra", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "Version $version\nEngine: Mozilla GeckoView\nOpen-source browser, GPL-3.0",
+                14f, Palette.MUTED
+            ).apply { setLineSpacing(0f, 1.25f); setPadding(0, dp(12), 0, dp(20)) }, matchWrap())
+        }
+    }
+
+    private fun showBrowserMenu() {
+        showSheet { sheet, dialog ->
+            fun item(paths: List<String>, text: String, action: () -> Unit) {
+                val rowView = row().apply {
+                    setPadding(dp(18), dp(12), dp(18), dp(12))
+                    neu(this, 20, Depth.BUTTON, pressable = true)
+                    setOnClickListener { dialog.dismiss(); action() }
+                }
+                rowView.addView(icon(paths, Palette.ACCENT, 20))
+                rowView.addView(label(text, 15f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
+                sheet.addView(rowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(14) })
+            }
+            item(Icons.BOOKMARK, "Bookmark this page") {
+                if (currentUrl.isNotBlank()) {
+                    bookmarks.add(currentUrl); persistBookmarks()
+                    Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                }
+            }
+            item(Icons.CLOCK, "History") { show("history") }
+            item(Icons.SETTINGS, "Settings") { show("settings") }
+        }
+    }
+
+    private fun showAddShortcutSheet() {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Add quick access", 18f, Palette.TEXT, 1), matchWrap())
+            fun field(hintText: String, uri: Boolean): EditText = EditText(this).apply {
+                hint = hintText
+                setHintTextColor(Palette.MUTED)
+                setTextColor(Palette.TEXT)
+                textSize = 15f
+                setSingleLine(true)
+                inputType = InputType.TYPE_CLASS_TEXT or if (uri) InputType.TYPE_TEXT_VARIATION_URI else 0
+                setPadding(dp(20), 0, dp(20), 0)
+                neu(this, 26, Depth.FIELD, inset = true)
+            }
+            val name = field("Shortcut name", false)
+            val url = field("https://example.com", true)
+            sheet.addView(name, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(18); bottomMargin = dp(16) })
+            sheet.addView(url, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(22) })
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Cancel") { dialog.dismiss() })
+            actions.addView(textButton("Save", primary = true) {
+                val title = name.text.toString().trim()
+                val resolved = AddressResolver.resolve(url.text.toString().trim())
+                if (title.isBlank() || resolved == null ||
                     !(resolved.startsWith("https://", true) || resolved.startsWith("http://", true))
                 ) {
                     Toast.makeText(this, "Enter a name and a valid website URL", Toast.LENGTH_SHORT).show()
                 } else {
                     val custom = loadQuickShortcuts().toMutableList()
-                    custom.removeAll { it[1].equals(name, ignoreCase = true) || it[2].equals(resolved, ignoreCase = true) }
-                    custom.add(listOf("↗", name, resolved))
+                    custom.removeAll { it[1].equals(title, true) || it[2].equals(resolved, true) }
+                    custom.add(listOf("↗", title, resolved))
                     saveQuickShortcuts(custom)
+                    dialog.dismiss()
                     showHome()
                 }
-            }
-            .show()
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
+            sheet.addView(actions, matchWrap())
+        }
+    }
+
+    private fun showConfirmSheet(title: String, message: String, confirm: String, onConfirm: () -> Unit) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label(title, 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(message, 14f, Palette.MUTED).apply {
+                setLineSpacing(0f, 1.25f); setPadding(0, dp(12), 0, dp(22))
+            }, matchWrap())
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Cancel") { dialog.dismiss() })
+            actions.addView(textButton(confirm, primary = true) { dialog.dismiss(); onConfirm() },
+                lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
+            sheet.addView(actions, matchWrap())
+        }
+    }
+
+    private fun showSheet(build: (LinearLayout) -> Unit) = showSheet { sheet, _ -> build(sheet) }
+
+    /** Neumorphic bottom sheet. */
+    private fun showSheet(build: (LinearLayout, Dialog) -> Unit) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val outer = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+        }
+        val sheet = column().apply {
+            setPadding(dp(22), dp(22), dp(22), dp(22))
+            neu(this, 28, Depth.CARD)
+            isClickable = true
+        }
+        outer.addView(sheet, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        build(sheet, dialog)
+        dialog.setContentView(outer)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.argb(150, 4, 9, 16)))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.show()
+    }
+
+    // ---- storage ----------------------------------------------------------------------
+
+    private fun hostOf(url: String): String {
+        if (url.isBlank()) return ""
+        return try {
+            android.net.Uri.parse(url).host?.removePrefix("www.")?.ifBlank { null } ?: url
+        } catch (_: Exception) { url }
     }
 
     private fun loadQuickShortcuts(): List<List<String>> {
-        val raw = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
-            .getString("quick_shortcuts", "[]") ?: "[]"
+        val raw = prefs.getString("quick_shortcuts", "[]") ?: "[]"
         return try {
             val saved = JSONArray(raw)
             (0 until saved.length()).mapNotNull { index ->
@@ -462,26 +1016,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveQuickShortcuts(shortcuts: List<List<String>>) {
         val saved = JSONArray()
-        shortcuts.forEach { item ->
-            saved.put(JSONArray().put(item[1]).put(item[2]))
-        }
-        getSharedPreferences("veyra_preferences", MODE_PRIVATE).edit()
-            .putString("quick_shortcuts", saved.toString())
-            .apply()
+        shortcuts.forEach { item -> saved.put(JSONArray().put(item[1]).put(item[2])) }
+        prefs.edit().putString("quick_shortcuts", saved.toString()).apply()
     }
 
     private fun loadBookmarks() {
-        val raw = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
-            .getString("bookmarks", "[]") ?: "[]"
+        val raw = prefs.getString("bookmarks", "[]") ?: "[]"
         try {
             val saved = JSONArray(raw)
             for (index in 0 until saved.length()) {
                 val url = saved.optString(index, "")
-                if (url.startsWith("https://", ignoreCase = true) ||
-                    url.startsWith("http://", ignoreCase = true)
-                ) {
-                    bookmarks.add(url)
-                }
+                if (url.startsWith("https://", true) || url.startsWith("http://", true)) bookmarks.add(url)
             }
         } catch (_: Exception) {
             // Ignore malformed preferences rather than preventing the browser from opening.
@@ -491,314 +1036,6 @@ class MainActivity : AppCompatActivity() {
     private fun persistBookmarks() {
         val saved = JSONArray()
         bookmarks.forEach { saved.put(it) }
-        getSharedPreferences("veyra_preferences", MODE_PRIVATE).edit()
-            .putString("bookmarks", saved.toString())
-            .apply()
-    }
-
-    private fun showHistory() {
-        currentPage = "history"
-        geckoView.visibility = View.GONE
-        contentArea.visibility = View.VISIBLE
-        contentArea.removeAllViews()
-        contentArea.addView(label("History", 24, true).apply { setPadding(0, dp(12), 0, dp(18)) })
-        if (history.isNotEmpty()) {
-            contentArea.addView(chip("Clear session history", 44) {
-                history.clear()
-                session.purgeHistory()
-                showHistory()
-                Toast.makeText(
-                    this@MainActivity,
-                    "Session and back/forward history cleared",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
-            ).apply { bottomMargin = dp(12) })
-        }
-        if (history.isEmpty()) {
-            contentArea.addView(label("Pages you visit in this session appear here.", 13, false, muted))
-        } else {
-            history.toList().reversed().forEach { url ->
-                contentArea.addView(chip(url, 52) { navigate(url) })
-            }
-        }
-        makeContentScrollable()
-        addBottomNav("history")
-    }
-
-    private fun showDownloads() {
-        currentPage = "downloads"
-        geckoView.visibility = View.GONE
-        contentArea.visibility = View.VISIBLE
-        contentArea.removeAllViews()
-        contentArea.addView(label("Downloads", 24, true).apply { setPadding(0, dp(12), 0, dp(18)) })
-        contentArea.addView(label("Download management is being built next. This screen will show active, completed, video, audio and file downloads.", 14, false, muted))
-        makeContentScrollable()
-        addBottomNav("downloads")
-    }
-
-    private fun showSettings() {
-        currentPage = "settings"
-        geckoView.visibility = View.GONE
-        contentArea.visibility = View.VISIBLE
-        contentArea.removeAllViews()
-        contentArea.addView(label("Settings", 24, true).apply { setPadding(0, dp(12), 0, dp(18)) })
-        val trackingCard = row().apply {
-            background = surface(panel, 20)
-            elevation = dp(3).toFloat()
-            setPadding(dp(16), dp(12), dp(12), dp(12))
-        }
-        val trackingDescription = column()
-        trackingDescription.addView(label("Tracking protection", 14, true))
-        trackingDescription.addView(label(
-            "Blocks known tracker resources. This is not a full ad blocker.",
-            11, false, muted
-        ).apply { setPadding(0, dp(4), dp(8), 0) })
-        trackingCard.addView(trackingDescription, LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-        ))
-        trackingCard.addView(SwitchCompat(this).apply {
-            isChecked = trackingProtectionEnabled
-            contentDescription = "Enable tracking protection"
-            setOnCheckedChangeListener { _, enabled ->
-                trackingProtectionEnabled = enabled
-                session.settings.setUseTrackingProtection(enabled)
-                getSharedPreferences("veyra_preferences", MODE_PRIVATE).edit()
-                    .putBoolean("tracking_protection_enabled", enabled)
-                    .apply()
-                Toast.makeText(
-                    this@MainActivity,
-                    if (enabled) "Tracking protection enabled" else "Tracking protection disabled",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        })
-        contentArea.addView(trackingCard, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { bottomMargin = dp(10) })
-
-        listOf(
-            "General" to "Home, tabs, browsing behavior",
-            "Downloads" to "Location and download behavior",
-            "Appearance" to "Neumorphic UI, themes and accent colors",
-            "About Veyra" to "Open-source browser"
-        ).forEach { (title, subtitle) ->
-            val item = column().apply {
-                background = surface(panel, 20)
-                elevation = dp(3).toFloat()
-                setPadding(dp(16), dp(13), dp(16), dp(13))
-            }
-            item.addView(label(title, 14, true))
-            item.addView(label(subtitle, 11, false, muted).apply { setPadding(0, dp(4), 0, 0) })
-            contentArea.addView(item, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) })
-        }
-        makeContentScrollable()
-        addBottomNav("settings")
-    }
-
-    private fun showSearch() {
-        currentPage = "search"
-        geckoView.visibility = View.GONE
-        contentArea.visibility = View.VISIBLE
-        contentArea.removeAllViews()
-        val searchPage = column()
-        val header = row()
-        header.addView(chip("←", 42) { showHome() }, LinearLayout.LayoutParams(dp(48), dp(44)))
-        header.addView(label("Search", 22, true), LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-            marginStart = dp(12)
-        })
-        searchPage.addView(header)
-        val query = EditText(this).apply {
-            hint = "Search or enter URL"
-            textSize = 15f
-            setTextColor(white)
-            setHintTextColor(muted)
-            background = surface(panelLight, 28)
-            setSingleLine(true)
-            imeOptions = EditorInfo.IME_ACTION_GO
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_NULL) {
-                    navigate(text.toString()); true
-                } else false
-            }
-        }
-        searchPage.addView(query, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(54)
-        ).apply { topMargin = dp(16); bottomMargin = dp(18) })
-        searchPage.addView(label("QUICK SEARCH", 11, true, muted).apply {
-            setPadding(dp(4), 0, 0, dp(10))
-        })
-        listOf("Google" to "https://google.com", "DuckDuckGo" to "https://duckduckgo.com",
-            "Wikipedia" to "https://wikipedia.org").forEach { (name, url) ->
-            searchPage.addView(chip("⌕   $name", 48) { navigate(url) },
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply {
-                    bottomMargin = dp(8)
-                })
-        }
-        searchPage.addView(label("Recent searches are not saved yet.", 12, false, muted).apply {
-            setPadding(dp(4), dp(14), 0, 0)
-        })
-        contentArea.addView(searchPage, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-        makeContentScrollable()
-        addBottomNav("search")
-        query.requestFocus()
-    }
-
-    /**
-     * Wrap content-only screens in a single scrolling viewport. The bottom navigation
-     * remains outside this viewport, preventing content from drawing underneath it.
-     */
-    private fun makeContentScrollable() {
-        if (contentArea.childCount == 1 && contentArea.getChildAt(0) is ScrollView) return
-        val page = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(4), 0, dp(16))
-            clipToPadding = false
-        }
-        val oldChildren = ArrayList<View>()
-        for (index in 0 until contentArea.childCount) {
-            oldChildren.add(contentArea.getChildAt(index))
-        }
-        contentArea.removeAllViews()
-        oldChildren.forEach { child ->
-            (child.parent as? ViewGroup)?.removeView(child)
-            // Preserve each screen's authored margins while normalizing the vertical
-            // measurement. Weighted/zero-height children must not collapse in a ScrollView.
-            val previous = child.layoutParams
-            val params = if (previous is LinearLayout.LayoutParams) {
-                LinearLayout.LayoutParams(previous).apply {
-                    width = ViewGroup.LayoutParams.MATCH_PARENT
-                    height = if (previous.height > 0) previous.height else
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    weight = 0f
-                }
-            } else {
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-            }
-            page.addView(child, params)
-        }
-        val scroll = ScrollView(this).apply {
-            isFillViewport = false
-            clipToPadding = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            setPadding(0, 0, 0, dp(4))
-        }
-        scroll.addView(page, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        contentArea.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-    }
-
-    private fun addBottomNav(selected: String) {
-        val nav = row().apply {
-            gravity = Gravity.CENTER
-            background = surface(panel, 28)
-            elevation = dp(8).toFloat()
-            setPadding(dp(4), dp(5), dp(4), dp(5))
-            minimumHeight = dp(56)
-        }
-        val items = listOf(
-            Triple("⌂", "home", "Home"),
-            Triple("⌕", "search", "Search"),
-            Triple("▢", "tabs", "Tabs"),
-            Triple("↓", "downloads", "Downloads"),
-            Triple("☷", "settings", "Settings")
-        )
-        items.forEach { (icon, key, description) ->
-            val item = TextView(this).apply {
-                text = icon
-                textSize = 22f
-                includeFontPadding = false
-                gravity = Gravity.CENTER
-                minWidth = dp(48)
-                minHeight = dp(48)
-                setTextColor(if (selected == key) cyan else muted)
-                background = surface(if (selected == key) panelLight else panel, 20)
-                contentDescription = description
-                setOnClickListener {
-                    when (key) {
-                        "home" -> showHome()
-                        "search" -> showSearch()
-                        "tabs" -> showTabs()
-                        "downloads" -> showDownloads()
-                        else -> showSettings()
-                    }
-                }
-            }
-            nav.addView(item, LinearLayout.LayoutParams(0, dp(46), 1f).apply {
-                marginStart = dp(3)
-                marginEnd = dp(3)
-            })
-        }
-        bottomNav?.let { root.removeView(it) }
-        bottomNav = nav
-        root.addView(nav, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(60)
-        ).apply { topMargin = dp(8); bottomMargin = dp(4) })
-    }
-
-    private fun chip(text: String, height: Int, action: () -> Unit): TextView =
-        TextView(this).apply {
-            this.text = text
-            textSize = 13f
-            setTextColor(white)
-            gravity = Gravity.CENTER
-            background = surface(panelLight, 22)
-            elevation = dp(3).toFloat()
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            minHeight = dp(height)
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { action() }
-        }
-
-    private fun label(text: String, size: Int, bold: Boolean, color: Int = white): TextView =
-        TextView(this).apply {
-            this.text = text
-            textSize = size.toFloat()
-            setTextColor(color)
-            if (bold) setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-    private fun row() = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-    }
-
-    private fun column() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-    }
-
-    private fun surface(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = dp(radius).toFloat()
-        setStroke(dp(1), Color.rgb(30, 53, 78))
-    }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    override fun onBackPressed() {
-        when {
-            currentPage == "browse" -> { showHome() }
-            currentPage != "home" -> showHome()
-            else -> super.onBackPressed()
-        }
-    }
-
-    override fun onDestroy() {
-        if (::session.isInitialized) session.close()
-        super.onDestroy()
+        prefs.edit().putString("bookmarks", saved.toString()).apply()
     }
 }
