@@ -338,7 +338,9 @@ class MainActivity : AppCompatActivity() {
             val saved = JSONArray(raw)
             for (index in 0 until saved.length()) {
                 val url = saved.optString(index, "")
-                if (url.startsWith("https://") || url.startsWith("http://")) {
+                if (url.startsWith("https://", ignoreCase = true) ||
+                    url.startsWith("http://", ignoreCase = true)
+                ) {
                     bookmarks.add(url)
                 }
             }
