@@ -1,20 +1,66 @@
 name: Desktop shell CI
+
 on:
   push:
-    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop.yml"
   pull_request:
-    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop.yml"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure
-        run: cmake -S desktop -B desktop/build
+        run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
+
       - name: Build
-        run: cmake --build desktop/build --config Release
+        run: cmake --build desktop/build --config Release --parallel 2
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          test -x desktop/build/veyra
+          ./desktop/build/veyra
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $app = "desktop/build/Release/veyra.exe"
+          if (!(Test-Path $app)) { throw "Expected executable not found: $app" }
+          & $app
+          if ($LASTEXITCODE -ne 0) { throw "Desktop smoke test failed with exit code $LASTEXITCODE" }
+
+      - name: Upload Linux shell artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: veyra-desktop-linux-shell
+          path: desktop/build/veyra
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows shell artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: veyra-desktop-windows-shell
+          path: desktop/build/Release/veyra.exe
+          if-no-files-found: error
+          retention-days: 7
