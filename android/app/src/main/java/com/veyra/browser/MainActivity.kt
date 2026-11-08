@@ -76,7 +76,9 @@ class MainActivity : AppCompatActivity() {
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(navy)
-            setPadding(dp(16), dp(12), dp(16), dp(4))
+            // One consistent outer grid for every screen and the fixed navigation.
+            setPadding(dp(16), dp(12), dp(16), dp(6))
+            clipToPadding = false
         }
         contentArea = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -190,8 +192,9 @@ class MainActivity : AppCompatActivity() {
                 tile.addView(label(item[0], 23, true, cyan).apply { gravity = Gravity.CENTER })
                 tile.addView(label(item[1], 11, false, white).apply { gravity = Gravity.CENTER })
                 line.addView(tile, LinearLayout.LayoutParams(0, dp(82), 1f).apply {
-                    marginEnd = dp(8)
-                    bottomMargin = dp(9)
+                    marginStart = dp(4)
+                    marginEnd = dp(4)
+                    bottomMargin = dp(10)
                 })
             }
             page.addView(line)
@@ -551,9 +554,23 @@ class MainActivity : AppCompatActivity() {
         contentArea.removeAllViews()
         oldChildren.forEach { child ->
             (child.parent as? ViewGroup)?.removeView(child)
-            page.addView(child, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
+            // Preserve each screen's authored margins while normalizing the vertical
+            // measurement. Weighted/zero-height children must not collapse in a ScrollView.
+            val previous = child.layoutParams
+            val params = if (previous is LinearLayout.LayoutParams) {
+                LinearLayout.LayoutParams(previous).apply {
+                    width = ViewGroup.LayoutParams.MATCH_PARENT
+                    height = if (previous.height > 0) previous.height else
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    weight = 0f
+                }
+            } else {
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+            page.addView(child, params)
         }
         val scroll = ScrollView(this).apply {
             isFillViewport = false
@@ -602,7 +619,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             nav.addView(item, LinearLayout.LayoutParams(0, dp(46), 1f).apply {
-                marginStart = dp(3); marginEnd = dp(3)
+                marginStart = dp(3)
+                marginEnd = dp(3)
             })
         }
         bottomNav?.let { root.removeView(it) }
