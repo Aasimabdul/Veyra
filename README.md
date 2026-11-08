@@ -2,7 +2,7 @@
 
 Veyra is an open-source browser project targeting **Android, Windows, and Linux**.
 
- > **Development status:** early preview, not a production-ready browser. Android Release Candidate CI has built and verified signed APKs/AAB and installed/launched the x86_64 APK in an API 35 emulator. The manual `Veyra First Release (Android)` workflow is available to publish two signed ARM APKs after a successful run. Desktop packages are intentionally withheld until a real rendering engine is integrated and smoke-tested.
+> **Development status:** early preview, not a production-ready browser. Android Release Candidate CI has built and verified signed APKs/AAB and installed/launched the x86_64 APK in an API 35 emulator. The manual `Veyra First Release (Android)` workflow is available to publish two signed ARM APKs after a successful run. Desktop packages are intentionally withheld until a real rendering engine is integrated and smoke-tested.
 
 ## Platforms
 
