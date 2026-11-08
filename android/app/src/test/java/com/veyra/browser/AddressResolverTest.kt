@@ -17,6 +17,11 @@ class AddressResolverTest {
     }
 
     @Test
+    fun httpSchemeMatchingIsCaseInsensitive() {
+        assertEquals("HTTP://example.com", AddressResolver.resolve("HTTP://example.com"))
+    }
+
+    @Test
     fun domainNamesReceiveHttps() {
         assertEquals("https://example.com/path", AddressResolver.resolve("example.com/path"))
         assertEquals("https://localhost:8080", AddressResolver.resolve("localhost:8080"))
