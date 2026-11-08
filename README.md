@@ -2,7 +2,7 @@
 
 Veyra is an open-source browser project targeting **Android, Windows, and Linux**.
 
-> **Development status:** early preview, not a production-ready browser. CI has successfully built ABI-specific debug APKs and installed/launched the x86_64 APK in an API 35 emulator. No production-signed release has been published.
+ > **Development status:** early preview, not a production-ready browser. Android Release Candidate CI has built and verified signed APKs/AAB and installed/launched the x86_64 APK in an API 35 emulator. The manual `Veyra First Release (Android)` workflow is available to publish two signed ARM APKs after a successful run. Desktop packages are intentionally withheld until a real rendering engine is integrated and smoke-tested.
 
 ## Platforms
 
@@ -17,7 +17,7 @@ Open the `android/` folder in Android Studio with JDK 17. Install Android SDK pl
 
 CI currently verifies separate `arm64-v8a`, `armeabi-v7a`, and `x86_64` debug APKs, checks package metadata, ZIP alignment and APK signatures, installs/launches the x86_64 build in an API 35 emulator, then runs unit tests and Android lint. These are debug artifacts, retained for 14 days; they are not production-signed releases. Download available artifacts from the [GitHub Actions runs](https://github.com/Aasimabdul/Veyra/actions/workflows/android.yml).
 
-A manually triggered **Android Release Candidate** workflow is now available in GitHub Actions. It is designed to build and verify signed ABI-specific release APKs plus an Android App Bundle, then upload them as a temporary workflow artifact; it does **not** publish a GitHub Release. It requires the repository owner to configure these Actions secrets: `ANDROID_KEYSTORE_BASE64` (base64-encoded signing keystore), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. Keep the keystore and passwords out of the repository. The workflow has not yet been run, so production signing and release packaging are still unverified.
+Two manually triggered workflows are available: **Android Release Candidate** builds and verifies signed ABI-specific release APKs plus an Android App Bundle as a temporary artifact; **Veyra First Release (Android)** verifies the signed Android APKs and publishes a GitHub prerelease containing only `arm64-v8a` and `armeabi-v7a` APKs plus `SHA256SUMS.txt`. The release workflow hard-fails if any APK is 150 MB or larger, verifies package/ABI/signature/zip alignment and matching signing certificates, and runs unit tests, lint, and an x86_64 emulator smoke test. It chooses an unused `v0.1.x` tag automatically. Both workflows require these owner-managed Actions secrets: `ANDROID_KEYSTORE_BASE64` (base64-encoded signing keystore), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. Keep the keystore and passwords out of the repository. A successful workflow run is required before claiming the release is published.
 
 ## Current implementation status
 
@@ -47,7 +47,7 @@ Do not rely on Veyra for sensitive browsing until the missing privacy controls a
 
 ## Desktop engine decision
 
-GeckoView is intended for Android embedding; it is not a drop-in desktop embedding library. The desktop shell currently does not render web pages. Before shipping desktop builds, validate an engine integration path, licensing, security update strategy, and packaging.
+The desktop shell currently does not render web pages, so desktop executables are not distributed as browser releases. Current official Qt 6.10 desktop support lists Windows and Linux x86_64; it does not list 32-bit Windows, and Qt WebEngine inherits additional Chromium platform constraints ([Qt supported platforms](https://doc.qt.io/qt-6.10/supported-platforms.html), [Qt WebEngine deployment](https://doc.qt.io/QT-6/qtwebengine-deploying.html)). CEF is the more promising candidate because its official project documents Win32 and x64 Windows builds, Linux support, and a Chromium-based security update path ([CEF project build example](https://github.com/chromiumembedded/cef-project), [CEF security updates](https://github.com/chromiumembedded/cef)). CEF has not yet been integrated into this repository; license notices, version pinning, package size, reproducible builds, and local-page smoke tests must be implemented before desktop release.
 
 ## Roadmap
 
