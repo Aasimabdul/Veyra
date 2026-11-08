@@ -136,6 +136,18 @@ jobs:
             sleep 3
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/lock.png"
             adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_download https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf
+            sleep 12
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/download.png"
+            adb shell ls -l /sdcard/Download/Veyra
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --ez veyra_private true --es veyra_url https://example.com
+            sleep 15
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/private-browser.png"
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page tabs
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/tabs-private.png"
+            adb shell am force-stop com.veyra.browser
             adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_url https://example.com
             sleep 15
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/browser.png"

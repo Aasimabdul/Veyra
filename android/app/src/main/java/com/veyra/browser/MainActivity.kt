@@ -135,6 +135,12 @@ class MainActivity : AppCompatActivity() {
     private fun openRequestedScreen() {
         val debuggable = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (!debuggable) return
+        intent?.getStringExtra("veyra_download")?.let { downloads.enqueueUrl(it, false); show("downloads"); return }
+        if (intent?.getBooleanExtra("veyra_private", false) == true) {
+            val tab = newTab(true)
+            if (tab != null) intent?.getStringExtra("veyra_url")?.let { navigate(it) }
+            return
+        }
         intent?.getStringExtra("veyra_url")?.let { navigate(it); return }
         intent?.getStringExtra("veyra_page")?.let { show(it) }
     }
