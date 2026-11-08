@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -85,6 +86,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var downloads: DownloadCenter
+    private var vaultUnlocked = false
+    private var pendingExportId: String? = null
+    private val vaultUnlock = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) vaultUnlocked = true
+        authInProgress = false
+        if (currentPage == "private") show("private")
+    }
+    private val importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importIntoVault(uri)
+    }
+    private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        val id = pendingExportId
+        pendingExportId = null
+        if (uri != null && id != null) exportFromVault(id, uri)
+    }
+    private val mediaPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) playMedia(uri, null)
+    }
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* Notifications are optional; downloads work without them. */ }
@@ -206,7 +225,7 @@ class MainActivity : AppCompatActivity() {
         val debuggable = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
         // Debug builds skip the flag for private tabs only so CI can screenshot them.
         val privateSecure = tabs.any { it.isPrivate } && !debuggable
-        if (appLockEnabled || privateSecure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        if (appLockEnabled || privateSecure || currentPage == "private") window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
 
@@ -280,6 +299,7 @@ class MainActivity : AppCompatActivity() {
             "downloads" -> showDownloads()
             "settings" -> showSettings()
             "appearance" -> showAppearance()
+            "private" -> showPrivateSpace()
             "privacy" -> showPrivacy()
             "lock" -> showLock()
             else -> showHome()
@@ -288,6 +308,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun resetContent(page: String) {
         currentPage = page
+        if (page != "private") vaultUnlocked = false
+        applySecureFlag()
         urlHost = null
         backButton = null
         forwardButton = null
@@ -989,6 +1011,226 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString("history", array.toString()).apply()
     }
 
+    private fun playMedia(uri: Uri, name: String?) {
+        startActivity(Intent(this, PlayerActivity::class.java).apply {
+            data = uri
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra("name", name)
+        })
+    }
+
+    // ---- Private Space ----------------------------------------------------------------
+
+    private fun causes(e: Throwable): Sequence<Throwable> = generateSequence(e) { it.cause }
+
+    /** Runs a vault operation, re-prompting for device unlock when the key window has expired. */
+    private fun <T> vaultOp(block: (PrivateVault) -> T): T? = try {
+        block(VaultKeys.vault(this))
+    } catch (e: Exception) {
+        when {
+            causes(e).any { it is android.security.keystore.UserNotAuthenticatedException } -> {
+                vaultUnlocked = false
+                show("private")
+            }
+            causes(e).any { it is android.security.keystore.KeyPermanentlyInvalidatedException } -> showVaultInvalidSheet()
+            e is PrivateVault.TooLargeException ->
+                Toast.makeText(this, "That file is larger than 50 MB", Toast.LENGTH_LONG).show()
+            else -> Toast.makeText(this, "Private Space error: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        }
+        null
+    }
+
+    private fun showVaultInvalidSheet() {
+        showConfirmSheet(
+            "Private Space key was reset",
+            "Android invalidated the encryption key (for example after the screen lock was changed). Existing items can no longer be decrypted. Reset Private Space to start fresh? This deletes the old items.",
+            "Reset"
+        ) {
+            VaultKeys.vault(this).wipe()
+            VaultKeys.delete()
+            show("private")
+        }
+    }
+
+    private fun unlockVault() {
+        val manager = getSystemService(KeyguardManager::class.java)
+        val intent = manager?.takeIf { it.isDeviceSecure }
+            ?.createConfirmDeviceCredentialIntent("Unlock Private Space", null)
+        if (intent == null) {
+            Toast.makeText(this, "Set a screen lock in Android settings first", Toast.LENGTH_LONG).show()
+            return
+        }
+        authInProgress = true
+        vaultUnlock.launch(intent)
+    }
+
+    private fun importIntoVault(uri: Uri) {
+        val name = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "file"
+        Thread {
+            val result = try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    VaultKeys.vault(this).importFile(name, input, PrivateVault.MAX_FILE_BYTES)
+                }
+                null
+            } catch (e: Exception) { e }
+            runOnUiThread {
+                if (result == null) {
+                    Toast.makeText(this, "Encrypted and stored", Toast.LENGTH_SHORT).show()
+                    if (currentPage == "private") show("private")
+                } else when {
+                    result is PrivateVault.TooLargeException ->
+                        Toast.makeText(this, "That file is larger than 50 MB", Toast.LENGTH_LONG).show()
+                    causes(result).any { it is android.security.keystore.UserNotAuthenticatedException } -> {
+                        vaultUnlocked = false; show("private")
+                    }
+                    else -> Toast.makeText(this, "Import failed: ${result.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun exportFromVault(id: String, uri: Uri) {
+        Thread {
+            val error = try {
+                contentResolver.openOutputStream(uri)?.use { out -> VaultKeys.vault(this).exportTo(id, out) }
+                null
+            } catch (e: Exception) { e }
+            runOnUiThread {
+                Toast.makeText(this, if (error == null) "Exported. The exported copy is not encrypted." else "Export failed: ${error.message}",
+                    Toast.LENGTH_LONG).show()
+            }
+        }.start()
+    }
+
+    private fun showPrivateSpace() {
+        resetContent("private")
+        val page = scrollPage()
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(iconButton(Icons.BACK, "Back") { show("settings") })
+        header.addView(label("Private Space", 22f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(22)
+        })
+        if (!vaultUnlocked) {
+            val box = column().apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(8), dp(24), dp(8), 0) }
+            val tile = LinearLayout(this).apply {
+                gravity = Gravity.CENTER
+                contentDescription = "Unlock Private Space"
+                setOnClickListener { unlockVault() }
+                neu(this, 40, Depth.CARD, pressable = true)
+                addView(icon(Icons.LOCK, Palette.ACCENT, 40))
+            }
+            box.addView(tile, lp(dp(100), dp(100)))
+            box.addView(label("Unlock to continue", 17f, Palette.TEXT, 1).apply {
+                gravity = Gravity.CENTER; setPadding(0, dp(26), 0, 0)
+            }, matchWrap())
+            box.addView(label(
+                "Notes and files here are encrypted with AES-256-GCM. The key is kept in the Android Keystore and needs your device fingerprint, PIN or pattern.",
+                13f, Palette.MUTED
+            ).apply { gravity = Gravity.CENTER; setLineSpacing(0f, 1.25f); setPadding(dp(8), dp(10), dp(8), dp(14)) }, matchWrap())
+            box.addView(label(
+                "There is no backup or recovery. If you remove your screen lock or Android resets the key, items cannot be decrypted. It does not protect a rooted or compromised device.",
+                12f, Palette.MUTED
+            ).apply { gravity = Gravity.CENTER; setLineSpacing(0f, 1.25f); setPadding(dp(8), 0, dp(8), 0) }, matchWrap())
+            page.addView(box, matchWrap())
+            addMainNav("settings")
+            return
+        }
+        val entries = vaultOp { it.list() }
+        if (entries == null) { addMainNav("settings"); return }
+        val actions = row()
+        actions.addView(textButton("New note", primary = true) { showNoteEditor(null) })
+        actions.addView(textButton("Import file") { importLauncher.launch(arrayOf("*/*")) },
+            lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
+        page.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(22); topMargin = dp(4)
+        })
+        if (entries.isEmpty()) {
+            page.addView(emptyState(Icons.LOCK, "Nothing stored yet", "Add a note or import a file (up to 50 MB). Everything is encrypted on this device."))
+        } else {
+            val dateFormat = DateFormat.getDateInstance(DateFormat.MEDIUM)
+            entries.forEach { entry ->
+                val isNote = entry.kind == "note"
+                page.addView(
+                    listRow(
+                        well(icon(if (isNote) Icons.NOTE else Icons.FILE, Palette.ACCENT, 20)),
+                        entry.name,
+                        "${if (isNote) "Note" else "File"} · ${DownloadNaming.formatBytes(entry.size)} · ${dateFormat.format(Date(entry.added))}"
+                    ) { if (isNote) showNoteEditor(entry) else showVaultFileSheet(entry) },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
+                )
+            }
+        }
+        addMainNav("settings")
+    }
+
+    private fun showVaultFileSheet(entry: PrivateVault.Entry) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label(entry.name, 18f, Palette.TEXT, 1).apply {
+                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, matchWrap())
+            sheet.addView(label("Exporting saves an unencrypted copy to a place you choose.", 13f, Palette.MUTED).apply {
+                setPadding(0, dp(10), 0, dp(20))
+            }, matchWrap())
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Delete") {
+                dialog.dismiss()
+                vaultOp { it.delete(entry.id) }
+                show("private")
+            })
+            actions.addView(textButton("Export", primary = true) {
+                dialog.dismiss()
+                pendingExportId = entry.id
+                exportLauncher.launch(entry.name)
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
+            sheet.addView(actions, matchWrap())
+        }
+    }
+
+    private fun showNoteEditor(entry: PrivateVault.Entry?) {
+        val existing = entry?.let { vaultOp { v -> v.readNote(it.id) } }
+        if (entry != null && existing == null) return
+        showSheet { sheet, dialog ->
+            sheet.addView(label(if (entry == null) "New note" else "Edit note", 18f, Palette.TEXT, 1), matchWrap())
+            fun field(hintText: String, multiline: Boolean) = EditText(this).apply {
+                hint = hintText
+                setHintTextColor(Palette.MUTED)
+                setTextColor(Palette.TEXT)
+                textSize = 15f
+                if (multiline) {
+                    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                    gravity = Gravity.TOP
+                    minLines = 5; maxLines = 8
+                    setPadding(dp(20), dp(16), dp(20), dp(16))
+                } else {
+                    setSingleLine(true)
+                    setPadding(dp(20), 0, dp(20), 0)
+                }
+                neu(this, if (multiline) 22 else 26, Depth.FIELD, inset = true)
+            }
+            val title = field("Title", false).apply { setText(entry?.name ?: "") }
+            val body = field("Write something private", true).apply { setText(existing ?: "") }
+            sheet.addView(title, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(18); bottomMargin = dp(14) })
+            sheet.addView(body, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(20) })
+            val actions = row().apply { gravity = Gravity.END }
+            if (entry != null) actions.addView(textButton("Delete") {
+                dialog.dismiss(); vaultOp { it.delete(entry.id) }; show("private")
+            })
+            actions.addView(textButton("Cancel") { dialog.dismiss() },
+                lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+            actions.addView(textButton("Save", primary = true) {
+                val ok = vaultOp { v ->
+                    if (entry == null) v.addNote(title.text.toString(), body.text.toString())
+                    else v.updateNote(entry.id, title.text.toString(), body.text.toString())
+                    true
+                }
+                if (ok == true) { dialog.dismiss(); show("private") }
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+            sheet.addView(actions, matchWrap())
+        }
+    }
+
     private fun startDownload(response: org.mozilla.geckoview.WebResponse, isPrivate: Boolean) {
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -1010,6 +1252,9 @@ class MainActivity : AppCompatActivity() {
         val page = scrollPage()
         val header = row().apply { minimumHeight = dp(48) }
         header.addView(label("Downloads", 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(iconButton(Icons.PLAY, "Play a local video or audio file", Palette.ACCENT, filled = true) {
+            mediaPicker.launch(arrayOf("video/*", "audio/*"))
+        }, lp(dp(44), dp(44)).apply { rightMargin = dp(10) })
         if (downloads.items.any { it.state == DlState.DONE || it.state == DlState.FAILED }) {
             header.addView(iconButton(Icons.TRASH, "Clear finished downloads") { downloads.clearFinished() })
         }
@@ -1034,6 +1279,10 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(18), dp(14), dp(18), dp(14))
             neu(this, 24, Depth.CARD, pressable = item.state == DlState.DONE)
             if (item.state == DlState.DONE) setOnClickListener {
+                if (DownloadNaming.isMediaMime(item.mime) && item.savedUri != null) {
+                    playMedia(Uri.parse(item.savedUri), item.name)
+                    return@setOnClickListener
+                }
                 val intent = downloads.openIntent(item)
                 try { if (intent != null) startActivity(intent) else throw IllegalStateException() }
                 catch (_: Exception) { Toast.makeText(this@MainActivity, "No app can open this file", Toast.LENGTH_SHORT).show() }
@@ -1253,6 +1502,7 @@ class MainActivity : AppCompatActivity() {
         ) { enabled -> setAppLock(enabled) }
         actionRow(Icons.SHIELD, "Privacy", "Blocked trackers, cookies, JavaScript") { show("privacy") }
         actionRow(Icons.SETTINGS, "Appearance", "Theme: ${if (themeKey == Themes.SYSTEM) "System" else Themes.byKey(themeKey).name}") { show("appearance") }
+        actionRow(Icons.LOCK, "Private Space", "Encrypted notes and files") { show("private") }
         actionRow(Icons.CLOCK, "History", "Pages visited in normal tabs") { show("history") }
         actionRow(Icons.TRASH, "Clear browsing data", "Cookies, cache, site data and history") { confirmClearData() }
         actionRow(Icons.INFO, "About Veyra", "Version, engine and licence") { showAbout() }
@@ -1323,6 +1573,9 @@ class MainActivity : AppCompatActivity() {
                     bookmarks.add(currentUrl); persistBookmarks()
                     Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
                 }
+            }
+            if (DownloadNaming.looksPlayable(currentUrl)) {
+                item(Icons.PLAY, "Play in Veyra") { playMedia(Uri.parse(currentUrl), null) }
             }
             item(Icons.SEARCH, "Find in page") { showFindSheet() }
             item(Icons.TABS, if (cur?.desktop == true) "Mobile site" else "Desktop site") { toggleDesktop() }

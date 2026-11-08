@@ -48,6 +48,17 @@ internal object DownloadNaming {
 
     private val mediaExtensions = setOf("mp4", "webm", "mkv", "mp3", "m4a", "ogg", "wav", "flac", "pdf", "zip", "apk")
 
+    private val playable = setOf("mp4", "webm", "mkv", "mp3", "m4a", "ogg", "wav", "flac")
+
+    /** True when a URL points straight at an audio/video file the built-in player can try. */
+    fun looksPlayable(url: String): Boolean {
+        val path = runCatching { java.net.URI(url).path.orEmpty() }.getOrDefault("")
+        return path.substringAfterLast('.', "").lowercase(Locale.US) in playable
+    }
+
+    fun isMediaMime(mime: String?): Boolean =
+        mime != null && (mime.startsWith("video/", true) || mime.startsWith("audio/", true))
+
     /** True when a URL path ends with a known direct-file extension. */
     fun looksLikeDirectFile(url: String): Boolean {
         val path = runCatching { java.net.URI(url).path.orEmpty() }.getOrDefault("")

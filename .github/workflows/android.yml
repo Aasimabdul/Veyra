@@ -168,6 +168,10 @@ jobs:
             sleep 3
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/home-crimson.png"
             adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page private
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/private-space.png"
+            adb shell am force-stop com.veyra.browser
             adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_url https://example.com
             sleep 15
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/browser.png"
