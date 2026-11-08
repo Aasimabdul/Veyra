@@ -117,7 +117,8 @@ jobs:
             size=$(stat -c %s "$apk")
             if [ "$size" -ge "$max_bytes" ]; then echo "::error::$apk is >= 150 MB"; exit 1; fi
             badging=$("$tools/aapt2" dump badging "$apk")
-            printf '%s\n' "$badging" | grep -q "package: name='com.veyra.browser' versionName='$VERSION'"
+            printf '%s\n' "$badging" | grep -q "package: name='com.veyra.browser'"
+            printf '%s\n' "$badging" | grep -q "versionName='$VERSION'"
             printf '%s\n' "$badging" | grep -q "native-code: '$abi'"
             "$tools/zipalign" -c -v 4 "$apk"
             cert_output=$("$tools/apksigner" verify --verbose --print-certs "$apk")
