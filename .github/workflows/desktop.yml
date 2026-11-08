@@ -116,6 +116,61 @@ jobs:
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
           ls -lh dist
 
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y librsvg2-bin libfuse2
+          appdir=dist/Veyra.AppDir
+          mkdir -p "$appdir/usr/lib/veyra"
+          cp -a desktop/build/Release/. "$appdir/usr/lib/veyra/"
+          rm -f "$appdir"/usr/lib/veyra/*.a
+          cp LICENSE "$appdir/usr/lib/veyra/LICENSE"
+          cp -a desktop/third_party_licenses "$appdir/usr/lib/veyra/"
+          rsvg-convert -w 256 -h 256 desktop/assets/veyra-icon.svg -o "$appdir/veyra.png"
+          cat > "$appdir/veyra.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=Veyra
+          Comment=Minimal, fast, open-source browser
+          Exec=veyra %U
+          Icon=veyra
+          Categories=Network;WebBrowser;
+          Terminal=false
+          DESKTOP
+          sed -i 's/^          //' "$appdir/veyra.desktop"
+          cat > "$appdir/AppRun" <<'APPRUN'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          # AppImages are mounted without SUID, so Chromium's setuid sandbox cannot be used.
+          exec "$HERE/usr/lib/veyra/veyra" --no-sandbox "$@"
+          APPRUN
+          sed -i 's/^          //' "$appdir/AppRun"
+          chmod +x "$appdir/AppRun"
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run "$appdir" dist/Veyra-x86_64.AppImage
+          (cd dist && sha256sum Veyra-x86_64.AppImage > Veyra-x86_64.AppImage.sha256)
+          ls -lh dist
+
+      - name: Smoke test AppImage
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/appimage-smoke.txt"
+          rm -f "$out"
+          xvfb-run -a timeout 120 dist/Veyra-x86_64.AppImage --appimage-extract-and-run --disable-gpu --smoke-test --smoke-test-output="$out" || true
+          test -s "$out"
+          cat "$out"
+          grep -Eq '^VEYRA_SMOKE_OK\|.*Chrome/' "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veyra-desktop-linux-x64-appimage
+          path: |
+            dist/*.AppImage
+            dist/*.AppImage.sha256
+          if-no-files-found: error
+          retention-days: 14
+
       - uses: actions/upload-artifact@v4
         with:
           name: veyra-desktop-linux-x64
