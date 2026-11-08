@@ -105,7 +105,7 @@ class MainActivity : AppCompatActivity() {
             overScrollMode = View.OVER_SCROLL_NEVER
         }
         val page = column().apply { setPadding(0, dp(4), 0, dp(18)) }
-        scroll.addView(page, ScrollView.LayoutParams(
+        scroll.addView(page, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ))
         contentArea.addView(scroll, LinearLayout.LayoutParams(
