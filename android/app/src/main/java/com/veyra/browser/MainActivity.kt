@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.WindowCompat
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import org.mozilla.geckoview.ContentBlocking
@@ -49,9 +50,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Keep content within the system-bar safe area on gesture and button navigation.
+        WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = navy
         window.navigationBarColor = navy
-        window.decorView.systemUiVisibility = 0
 
         val contentBlockingSettings = ContentBlocking.Settings.Builder()
             .antiTracking(ContentBlocking.AntiTracking.DEFAULT)
@@ -114,8 +116,11 @@ class MainActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
-        val header = row()
-        header.addView(label("Veyra", 26, true), LinearLayout.LayoutParams(0, dp(52), 1f))
+        val header = row().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(48)
+        }
+        header.addView(label("Veyra", 26, true), LinearLayout.LayoutParams(0, dp(48), 1f))
         header.addView(chip("☆", 42) { showBookmarks() }.apply {
             contentDescription = "Open bookmarks"
         }, LinearLayout.LayoutParams(dp(46), dp(44)).apply { marginEnd = dp(8) })
@@ -126,7 +131,10 @@ class MainActivity : AppCompatActivity() {
 
         val brand = column().apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(18), 0, dp(20))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setPadding(0, dp(16), 0, dp(18))
         }
         brand.addView(label("V", 58, true, cyan).apply {
             gravity = Gravity.CENTER
@@ -175,13 +183,18 @@ class MainActivity : AppCompatActivity() {
             listOf("+", "Add", "")
         )
         shortcuts.chunked(3).forEach { group ->
-            val line = row()
+            val line = row().apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
             group.forEach { item ->
                 val tile = column().apply {
                     gravity = Gravity.CENTER
                     background = surface(panel, 22)
                     elevation = dp(3).toFloat()
-                    setPadding(dp(4), dp(12), dp(4), dp(10))
+                    setPadding(dp(4), dp(10), dp(4), dp(10))
+                    minimumWidth = 0
                     isClickable = true
                     isFocusable = true
                     setOnClickListener {
@@ -189,8 +202,16 @@ class MainActivity : AppCompatActivity() {
                         else Toast.makeText(this@MainActivity, "Custom quick links are coming next", Toast.LENGTH_SHORT).show()
                     }
                 }
-                tile.addView(label(item[0], 23, true, cyan).apply { gravity = Gravity.CENTER })
-                tile.addView(label(item[1], 11, false, white).apply { gravity = Gravity.CENTER })
+                tile.addView(label(item[0], 23, true, cyan).apply {
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30)))
+                tile.addView(label(item[1], 11, false, white).apply {
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(20)))
                 line.addView(tile, LinearLayout.LayoutParams(0, dp(82), 1f).apply {
                     marginStart = dp(4)
                     marginEnd = dp(4)
@@ -200,10 +221,11 @@ class MainActivity : AppCompatActivity() {
             page.addView(line)
         }
 
-        val continueCard = column().apply {
+        val continueCard = row().apply {
+            gravity = Gravity.CENTER_VERTICAL
             background = surface(panel, 24)
             elevation = dp(3).toFloat()
-            setPadding(dp(16), dp(15), dp(16), dp(15))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
             isClickable = true
             isFocusable = true
             setOnClickListener {
@@ -211,11 +233,26 @@ class MainActivity : AppCompatActivity() {
                 else address.requestFocus()
             }
         }
-        continueCard.addView(label("▣   Continue browsing", 15, true))
-        continueCard.addView(label(
+        continueCard.addView(label("▣", 22, true, cyan).apply {
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+        }, LinearLayout.LayoutParams(dp(32), dp(40)).apply { marginEnd = dp(12) })
+        val continueText = column().apply { minimumWidth = 0 }
+        continueText.addView(label("Continue browsing", 15, true).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        continueText.addView(label(
             if (currentUrl.isBlank()) "Your last visited page appears here" else currentUrl,
             12, false, muted
-        ).apply { setPadding(dp(2), dp(6), 0, 0) })
+        ).apply {
+            setPadding(0, dp(5), 0, 0)
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        continueCard.addView(continueText, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+        ))
         page.addView(continueCard, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(12) })
@@ -592,6 +629,7 @@ class MainActivity : AppCompatActivity() {
             background = surface(panel, 28)
             elevation = dp(8).toFloat()
             setPadding(dp(4), dp(5), dp(4), dp(5))
+            minimumHeight = dp(56)
         }
         val items = listOf(
             Triple("⌂", "home", "Home"),
@@ -604,7 +642,10 @@ class MainActivity : AppCompatActivity() {
             val item = TextView(this).apply {
                 text = icon
                 textSize = 22f
+                includeFontPadding = false
                 gravity = Gravity.CENTER
+                minWidth = dp(48)
+                minHeight = dp(48)
                 setTextColor(if (selected == key) cyan else muted)
                 background = surface(if (selected == key) panelLight else panel, 20)
                 contentDescription = description
@@ -626,7 +667,7 @@ class MainActivity : AppCompatActivity() {
         bottomNav?.let { root.removeView(it) }
         bottomNav = nav
         root.addView(nav, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(60)
         ).apply { topMargin = dp(8); bottomMargin = dp(4) })
     }
 
