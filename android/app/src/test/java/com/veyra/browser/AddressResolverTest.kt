@@ -49,4 +49,32 @@ class AddressResolverTest {
             AddressResolver.resolve("https://")
         )
     }
+
+    @Test
+    fun urlsContainingEmbeddedCredentialsBecomeSearchText() {
+        assertEquals(
+            "https://www.google.com/search?q=https%3A%2F%2Fuser%3Asecret%40example.com",
+            AddressResolver.resolve("https://user:secret@example.com")
+        )
+    }
+
+    @Test
+    fun outOfRangePortsBecomeSearchText() {
+        assertEquals(
+            "https://www.google.com/search?q=https%3A%2F%2Fexample.com%3A65536",
+            AddressResolver.resolve("https://example.com:65536")
+        )
+        assertEquals(
+            "https://www.google.com/search?q=localhost%3A65536",
+            AddressResolver.resolve("localhost:65536")
+        )
+    }
+
+    @Test
+    fun zeroPortIsRejectedAsNavigationTarget() {
+        assertEquals(
+            "https://www.google.com/search?q=https%3A%2F%2Fexample.com%3A0",
+            AddressResolver.resolve("https://example.com:0")
+        )
+    }
 }

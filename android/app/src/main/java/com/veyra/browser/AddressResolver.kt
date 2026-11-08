@@ -18,11 +18,7 @@ internal object AddressResolver {
             input.startsWith("https://", ignoreCase = true)
         ) {
             val uri = runCatching { URI(input) }.getOrNull()
-            if (uri != null &&
-                (uri.scheme.equals("http", ignoreCase = true) ||
-                    uri.scheme.equals("https", ignoreCase = true)) &&
-                !uri.host.isNullOrBlank()
-            ) {
+            if (uri != null && isValidWebUri(uri)) {
                 return uri.normalize().toASCIIString()
             }
             return search(input)
@@ -31,7 +27,8 @@ internal object AddressResolver {
         if (hostInput.matches(input)) {
             val uri = runCatching { URI("https://$input") }.getOrNull()
             val host = uri?.host
-            if (!host.isNullOrBlank() &&
+            if (uri != null && isValidWebUri(uri) &&
+                !host.isNullOrBlank() &&
                 (host.contains('.') || host.equals("localhost", ignoreCase = true))
             ) {
                 return uri.normalize().toASCIIString()
@@ -40,6 +37,20 @@ internal object AddressResolver {
 
         // Treat file:, javascript:, data:, and other unsupported schemes as search text.
         return search(input)
+    }
+
+    private fun isValidWebUri(uri: URI): Boolean {
+        val scheme = uri.scheme
+        if (!scheme.equals("http", ignoreCase = true) &&
+            !scheme.equals("https", ignoreCase = true)
+        ) {
+            return false
+        }
+
+        // Avoid silently navigating to URLs that embed credentials or use invalid TCP ports.
+        if (uri.host.isNullOrBlank() || uri.rawUserInfo != null) return false
+        val port = uri.port
+        return port == -1 || port in 1..65535
     }
 
     private fun search(query: String): String =
