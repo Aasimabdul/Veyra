@@ -61,8 +61,21 @@ jobs:
             exit 1
           fi
           keystore="$RUNNER_TEMP/veyra-release.jks"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
-          test -s "$keystore"
+          # Tolerate whitespace, line wraps and CRLF that get pasted into the secret box.
+          if ! printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$keystore" 2>/dev/null; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not valid base64. It must contain the base64 text of the keystore FILE contents (e.g. 'base64 -w0 veyra-release.jks'), not a file path, the keystore password, or the .jks pasted as raw text."
+            exit 1
+          fi
+          if [ ! -s "$keystore" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 decoded to an empty file."
+            exit 1
+          fi
+          # Confirm it is a real keystore and that the alias + passwords match (secrets are read from env, never printed).
+          if ! keytool -list -keystore "$keystore" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::Decoded file is not a readable keystore, or ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS do not match it."
+            exit 1
+          fi
+          echo "Keystore decoded and alias verified."
           echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
 
       - name: Build signed release APKs and Android App Bundle
