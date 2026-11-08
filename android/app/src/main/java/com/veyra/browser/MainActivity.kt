@@ -313,6 +313,7 @@ class MainActivity : AppCompatActivity() {
         contentArea.addView(label("Multiple independent tabs and private sessions are planned for the next browser milestone.", 13, false, muted).apply {
             setPadding(dp(4), dp(18), dp(4), 0)
         })
+        makeContentScrollable()
         addBottomNav("tabs")
     }
 
@@ -348,6 +349,7 @@ class MainActivity : AppCompatActivity() {
             })
             contentArea.addView(itemRow)
         }
+        makeContentScrollable()
         addBottomNav("bookmarks")
     }
 
@@ -404,6 +406,7 @@ class MainActivity : AppCompatActivity() {
                 contentArea.addView(chip(url, 52) { navigate(url) })
             }
         }
+        makeContentScrollable()
         addBottomNav("history")
     }
 
@@ -414,6 +417,7 @@ class MainActivity : AppCompatActivity() {
         contentArea.removeAllViews()
         contentArea.addView(label("Downloads", 24, true).apply { setPadding(0, dp(12), 0, dp(18)) })
         contentArea.addView(label("Download management is being built next. This screen will show active, completed, video, audio and file downloads.", 14, false, muted))
+        makeContentScrollable()
         addBottomNav("downloads")
     }
 
@@ -474,6 +478,7 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(10) })
         }
+        makeContentScrollable()
         addBottomNav("settings")
     }
 
@@ -523,8 +528,45 @@ class MainActivity : AppCompatActivity() {
         contentArea.addView(searchPage, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
+        makeContentScrollable()
         addBottomNav("search")
         query.requestFocus()
+    }
+
+    /**
+     * Wrap content-only screens in a single scrolling viewport. The bottom navigation
+     * remains outside this viewport, preventing content from drawing underneath it.
+     */
+    private fun makeContentScrollable() {
+        if (contentArea.childCount == 1 && contentArea.getChildAt(0) is ScrollView) return
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(4), 0, dp(16))
+            clipToPadding = false
+        }
+        val oldChildren = ArrayList<View>()
+        for (index in 0 until contentArea.childCount) {
+            oldChildren.add(contentArea.getChildAt(index))
+        }
+        contentArea.removeAllViews()
+        oldChildren.forEach { child ->
+            (child.parent as? ViewGroup)?.removeView(child)
+            page.addView(child, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            clipToPadding = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            setPadding(0, 0, 0, dp(4))
+        }
+        scroll.addView(page, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        contentArea.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
     }
 
     private fun addBottomNav(selected: String) {
