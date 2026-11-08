@@ -102,6 +102,47 @@ jobs:
             sleep 8
             adb shell pidof com.veyra.browser
             if adb logcat -d -t 5000 | grep -E "FATAL EXCEPTION|Fatal signal"; then echo "::error::Veyra crashed during emulator smoke test"; exit 1; fi
+            mkdir -p "$GITHUB_WORKSPACE/shots"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page home
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/home.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page search
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/search.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page tabs
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/tabs.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page bookmarks
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/bookmarks.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page history
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/history.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page downloads
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/downloads.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page settings
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/settings.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_url https://example.com
+            sleep 15
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/browser.png"
+      - name: Upload UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veyra-ui-screenshots-${{ github.run_number }}
+          path: shots/*.png
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: veyra-arm64-v8a-debug-${{ github.run_number }}

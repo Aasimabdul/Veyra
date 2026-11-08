@@ -161,7 +161,16 @@ class MainActivity : AppCompatActivity() {
             authenticate()
         } else {
             show("home")
+            openRequestedScreen()
         }
+    }
+
+    /** Debug builds only: lets CI open a screen directly to capture screenshots. */
+    private fun openRequestedScreen() {
+        val debuggable = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+        if (!debuggable) return
+        intent?.getStringExtra("veyra_url")?.let { navigate(it); return }
+        intent?.getStringExtra("veyra_page")?.let { show(it) }
     }
 
     // ---- lifecycle / lock -------------------------------------------------------------
