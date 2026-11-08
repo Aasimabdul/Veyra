@@ -1,48 +1,28 @@
-# Veyra Desktop (development status)
+# Veyra Desktop (preview development)
 
-Veyra Desktop is currently a **buildable native shell scaffold**, not yet a full browser. The desktop web-rendering engine has not been integrated into the public `main` branch, so this target must not be advertised or released as a functional browser.
+Veyra Desktop is moving from the original console scaffold to a Qt 6 WebEngine browser prototype. The prototype provides a native window, address bar, back/forward/reload/home controls, and a real embedded Chromium-based page renderer.
 
-## Current CI
+## Current target
 
-The Desktop Shell CI workflow builds on Windows and Linux, runs the scaffold executable, and uploads short-lived artifacts for inspection:
+- Windows x64 and Linux x86_64 CI builds
+- Qt 6.8.3 with Qt WebEngine (pinned in CI)
+- Dark navy / cyan visual direction
+- A deterministic `--smoke-test` mode that loads local HTML and verifies its title
 
-- `veyra-desktop-windows-shell` — Windows executable
-- `veyra-desktop-linux-shell` — Linux executable
-
-These artifacts prove only that the shell compiles and launches. They do **not** prove that web pages can be rendered. The current workflow does not yet provide the requested real-page `--smoke-test`; that test depends on integrating an actual rendering engine first.
-
-## Design and assets
-
-The desktop design target is minimalist neumorphism: navy background `#0F1A2B`, raised shadows `#070E19` / `#182A42`, primary text `#E8F0FB`, muted text `#8FA3BF`, and cyan accent `#39D8FF`. The planned app icon is in `desktop/assets/veyra-icon.svg`. This is a design specification, not a claim that the current console scaffold already implements the final browser UI.
+This is an early prototype, not yet a stable or security-hardened browser. It does not yet provide full tab management, bookmarks, history, downloads, private sessions, installer packaging, or an AppImage. Windows x86 is not targeted by this Qt WebEngine build.
 
 ## Local build
 
-Requirements: CMake 3.20+ and a C++17 compiler.
+Install Qt 6.8.3 with the **Qt WebEngine** and **Qt WebEngine Widgets** components, plus CMake 3.21+ and a C++17 compiler.
 
 ```sh
 cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
 cmake --build desktop/build --config Release
+./desktop/build/veyra --smoke-test
 ```
 
-Linux scaffold launch:
+On Linux, the smoke test requires a graphical display; on headless machines use `xvfb-run -a desktop/build/veyra --smoke-test`. For normal use, launch `veyra` without `--smoke-test`.
 
-```sh
-./desktop/build/veyra
-```
+## Security and release policy
 
-Windows scaffold launch (PowerShell):
-
-```powershell
-.\desktop\build\Release\veyra.exe
-```
-
-## Before calling this a browser
-
-1. Recover and identify the engine SDK available in the development environment.
-2. Commit/document the SDK version and acquisition method; do not commit proprietary or bulky engine binaries unless their license permits it.
-3. Integrate the engine into CMake and implement a real browser window, navigation, address bar, loading/error states, and safe shutdown.
-4. Add CI setup for the engine on both Windows and Linux, then verify actual page rendering with a deterministic local-HTML title assertion.
-5. Verify Windows PE architecture for each Windows target and package the real application (portable ZIPs and Linux AppImage) only after the tests pass.
-6. Include engine license notices and document the pinned engine/Chromium security-update process.
-
-The public repository currently does not contain the locally installed engine SDK the user referred to, so CI cannot use it until a reproducible acquisition or build path is committed. No signing keys, tokens, or other secrets belong in the repository.
+The embedded renderer uses Qt WebEngine's Chromium runtime. Pin and regularly update the Qt patch release, review Qt/Chromium security advisories, and include required Qt/Chromium license notices before public packaging. Do not publish CI preview artifacts as stable releases until runtime deployment, actual page rendering, package launch, and SHA-256 checks are verified. No signing keys or tokens belong in the repository.
