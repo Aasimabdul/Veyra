@@ -201,7 +201,11 @@ object Icons {
     val BACK = listOf("M15 5l-7 7 7 7")
     val FORWARD = listOf("M9 5l7 7-7 7")
     val SHARE = listOf("M12 15V4", "m8 8 4-4 4 4", "M6 12v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6")
-    val MENU = listOf("M12 6h.01M12 12h.01M12 18h.01")
+    val MENU = listOf(
+        "M10.6 6a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0",
+        "M10.6 12a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0",
+        "M10.6 18a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0-2.8 0"
+    )
     val SHIELD = listOf("M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z", "m9 12 2 2 4-4")
     val SHIELD_OFF = listOf("M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z")
     val LOCK = listOf("M7 11V8a5 5 0 0 1 10 0v3", "M8 11h8a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z")
@@ -318,7 +322,7 @@ fun Context.listRow(
     })
     if (subtitle.isNotBlank()) {
         text.addView(label(subtitle, 13f, Palette.MUTED).apply {
-            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(0, dp(4), 0, 0)
         })
     }

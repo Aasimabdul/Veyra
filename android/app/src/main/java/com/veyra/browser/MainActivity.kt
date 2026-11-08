@@ -382,13 +382,13 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(8), 0, dp(8), 0)
             neu(this, 28, Depth.CARD)
         }
-        fun cell(paths: List<String>, description: String, color: Int, action: () -> Unit): View =
+        fun cell(paths: List<String>, description: String, color: Int, filled: Boolean = false, action: () -> Unit): View =
             LinearLayout(this).apply {
                 gravity = Gravity.CENTER
                 contentDescription = description
                 isClickable = true
                 setOnClickListener { action() }
-                addView(icon(paths, color, 22))
+                addView(icon(paths, color, 22, filled))
             }
         val back = cell(Icons.BACK, "Back", Palette.MUTED) {
             if (canGoBack) session.goBack() else show("home")
@@ -417,7 +417,7 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
             })
         }
-        val menu = cell(Icons.MENU, "Menu", Palette.MUTED) { showBrowserMenu() }
+        val menu = cell(Icons.MENU, "Menu", Palette.MUTED, filled = true) { showBrowserMenu() }
         listOf(back, forward, share, tabs, menu).forEach { view ->
             bar.addView(view, lp(0, dp(48), 1f))
         }
