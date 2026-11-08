@@ -218,6 +218,8 @@ object Icons {
     )
     val RELOAD = listOf("M20 12a8 8 0 1 1-2.5-5.8", "M20 4v4h-4")
     val CHEVRON = listOf("M9 5l7 7-7 7")
+    val PAUSE = listOf("M9 6v12M15 6v12")
+    val PLAY = listOf("M8 5l11 7-11 7z")
     val INFO = listOf("M4 12a8 8 0 1 0 16 0a8 8 0 1 0-16 0", "M12 11v5", "M12 8h.01")
 }
 

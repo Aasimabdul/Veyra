@@ -42,7 +42,11 @@ class MainActivity : AppCompatActivity() {
     private data class HistoryEntry(val url: String, var title: String, val time: Long)
 
     private lateinit var runtime: GeckoRuntime
-    private lateinit var session: GeckoSession
+    private val tabs = ArrayList<Tab>()
+    private var cur: Tab? = null
+    private var nextTabId = 1
+    private var tabsShowPrivate = false
+    private val maxTabs = 8
     private lateinit var geckoView: GeckoView
     private lateinit var root: LinearLayout
     private lateinit var contentArea: LinearLayout
@@ -52,10 +56,10 @@ class MainActivity : AppCompatActivity() {
     private var forwardButton: View? = null
     private var progressFill: View? = null
     private var currentPage = "home"
-    private var currentUrl = ""
-    private var currentTitle = ""
-    private var canGoBack = false
-    private var canGoForward = false
+    private val currentUrl: String get() = cur?.url ?: ""
+    private val currentTitle: String get() = cur?.title ?: ""
+    private val canGoBack: Boolean get() = cur?.canGoBack == true
+    private val canGoForward: Boolean get() = cur?.canGoForward == true
     private var trackingProtectionEnabled = true
     private val history = ArrayList<HistoryEntry>()
     private val bookmarks = linkedSetOf<String>()
@@ -75,6 +79,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private lateinit var downloads: DownloadCenter
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* Notifications are optional; downloads work without them. */ }
+    private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     private val prefs get() = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -91,54 +101,10 @@ class MainActivity : AppCompatActivity() {
             GeckoRuntimeSettings.Builder().contentBlocking(contentBlockingSettings).build()
         )
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
-        session = GeckoSession().apply {
-            settings.setUseTrackingProtection(trackingProtectionEnabled)
-            navigationDelegate = object : GeckoSession.NavigationDelegate {
-                override fun onLocationChange(
-                    session: GeckoSession,
-                    url: String?,
-                    perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
-                    hasUserGesture: Boolean
-                ) {
-                    if (url.isNullOrBlank() || url == "about:blank") return
-                    currentUrl = url
-                    currentTitle = ""
-                    if (history.lastOrNull()?.url != url) {
-                        history.add(HistoryEntry(url, "", System.currentTimeMillis()))
-                    }
-                    urlHost?.text = hostOf(url)
-                }
-
-                override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
-                    this@MainActivity.canGoBack = canGoBack
-                }
-
-                override fun onCanGoForward(session: GeckoSession, canGoForward: Boolean) {
-                    this@MainActivity.canGoForward = canGoForward
-                    forwardButton?.alpha = if (canGoForward) 1f else 0.4f
-                }
-            }
-            contentDelegate = object : GeckoSession.ContentDelegate {
-                override fun onTitleChange(session: GeckoSession, title: String?) {
-                    if (title.isNullOrBlank()) return
-                    currentTitle = title
-                    history.lastOrNull()?.title = title
-                }
-            }
-            progressDelegate = object : GeckoSession.ProgressDelegate {
-                override fun onProgressChange(session: GeckoSession, progress: Int) {
-                    progressFill?.let { bar ->
-                        val parent = bar.parent as? View
-                        bar.visibility = if (progress in 1..99) View.VISIBLE else View.INVISIBLE
-                        bar.pivotX = 0f
-                        bar.scaleX = progress / 100f
-                        parent?.visibility = View.VISIBLE
-                    }
-                }
-            }
+        geckoView = GeckoView(this)
+        downloads = DownloadCenter(this) {
+            if (currentPage == "downloads") refreshDownloads()
         }
-        session.open(runtime)
-        geckoView = GeckoView(this).apply { setSession(this@MainActivity.session) }
 
         appLockEnabled = prefs.getBoolean("app_lock_enabled", false) && deviceIsSecure()
         applySecureFlag()
@@ -194,7 +160,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (::session.isInitialized) session.close()
+        tabs.forEach { it.session.close() }
+        tabs.clear()
         super.onDestroy()
     }
 
@@ -202,7 +169,7 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() {
         when {
             currentPage == "lock" -> super.onBackPressed()
-            currentPage == "browse" && canGoBack -> session.goBack()
+            currentPage == "browse" && canGoBack -> cur?.session?.goBack()
             currentPage != "home" -> show("home")
             else -> super.onBackPressed()
         }
@@ -212,7 +179,7 @@ class MainActivity : AppCompatActivity() {
         getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true
 
     private fun applySecureFlag() {
-        if (appLockEnabled) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        if (appLockEnabled || tabs.any { it.isPrivate }) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
 
@@ -391,10 +358,10 @@ class MainActivity : AppCompatActivity() {
                 addView(icon(paths, color, 22, filled))
             }
         val back = cell(Icons.BACK, "Back", Palette.MUTED) {
-            if (canGoBack) session.goBack() else show("home")
+            if (canGoBack) cur?.session?.goBack() else show("home")
         }
         val forward = cell(Icons.FORWARD, "Forward", Palette.MUTED) {
-            if (canGoForward) session.goForward()
+            if (canGoForward) cur?.session?.goForward()
         }.apply { alpha = if (canGoForward) 1f else 0.4f }
         backButton = back
         forwardButton = forward
@@ -408,10 +375,10 @@ class MainActivity : AppCompatActivity() {
         }
         val tabs = LinearLayout(this).apply {
             gravity = Gravity.CENTER
-            contentDescription = "Tabs, 1 open"
+            contentDescription = "Tabs, ${tabs.size} open"
             isClickable = true
             setOnClickListener { show("tabs") }
-            addView(label("1", 12f, Palette.ACCENT, 1).apply {
+            addView(label(tabs.size.toString(), 12f, Palette.ACCENT, 1).apply {
                 gravity = Gravity.CENTER
                 neu(this, 8, Depth.KNOB, inset = true)
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
@@ -622,6 +589,12 @@ class MainActivity : AppCompatActivity() {
             neu(this, 26, Depth.FIELD, inset = true)
         }
         pill.addView(icon(Icons.LOCK, Palette.ACCENT, 16))
+        if (cur?.isPrivate == true) {
+            pill.addView(label("PRIVATE", 10f, Palette.ACCENT, 1).apply {
+                letterSpacing = 0.1f
+                setPadding(dp(10), 0, 0, 0)
+            })
+        }
         urlHost = label(hostOf(currentUrl), 14f, Palette.TEXT, 1).apply {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -632,7 +605,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             contentDescription = "Reload page"
             isClickable = true
-            setOnClickListener { session.reload() }
+            setOnClickListener { cur?.session?.reload() }
             addView(icon(Icons.RELOAD, Palette.MUTED, 18))
         }
         pill.addView(reload, lp(dp(40), dp(40)))
@@ -654,6 +627,12 @@ class MainActivity : AppCompatActivity() {
         })
 
         (geckoView.parent as? ViewGroup)?.removeView(geckoView)
+        cur?.let { tab ->
+            if (geckoView.session !== tab.session) {
+                if (geckoView.session != null) geckoView.releaseSession()
+                geckoView.setSession(tab.session)
+            }
+        }
         contentArea.addView(geckoView, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         addBrowserBar()
     }
@@ -661,7 +640,7 @@ class MainActivity : AppCompatActivity() {
     private fun trackerShield(): View {
         val button = LinearLayout(this).apply {
             gravity = Gravity.CENTER
-            setOnClickListener { setTrackingProtection(!trackingProtectionEnabled); show("browse"); session.reload() }
+            setOnClickListener { setTrackingProtection(!trackingProtectionEnabled); show("browse"); cur?.session?.reload() }
             neu(this, 18, Depth.BUTTON, pressable = true)
         }
         button.contentDescription =
@@ -680,44 +659,153 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Enter a valid address or search term", Toast.LENGTH_SHORT).show()
             return
         }
-        currentUrl = uri
-        currentTitle = ""
+        val tab = cur ?: newTab(false) ?: return
         try {
-            session.loadUri(uri)
+            tab.url = uri
+            tab.title = ""
+            tab.session.loadUri(uri)
             show("browse")
         } catch (_: Exception) {
             Toast.makeText(this, "Could not open that address", Toast.LENGTH_SHORT).show()
         }
     }
 
+    // ---- tabs -------------------------------------------------------------------------
+
+    /** Creates a tab backed by its own GeckoSession; private tabs use Gecko's private mode. */
+    private fun newTab(private: Boolean): Tab? {
+        if (tabs.size >= maxTabs) {
+            Toast.makeText(this, "Tab limit reached ($maxTabs). Close a tab first.", Toast.LENGTH_SHORT).show()
+            return null
+        }
+        val settings = org.mozilla.geckoview.GeckoSessionSettings.Builder()
+            .usePrivateMode(private)
+            .useTrackingProtection(trackingProtectionEnabled)
+            .build()
+        val session = GeckoSession(settings)
+        val tab = Tab(nextTabId++, private, session)
+        session.navigationDelegate = object : GeckoSession.NavigationDelegate {
+            override fun onLocationChange(
+                session: GeckoSession,
+                url: String?,
+                perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
+                hasUserGesture: Boolean
+            ) {
+                if (url.isNullOrBlank() || url == "about:blank") return
+                tab.url = url
+                tab.title = ""
+                if (!tab.isPrivate && history.lastOrNull()?.url != url) {
+                    history.add(HistoryEntry(url, "", System.currentTimeMillis()))
+                }
+                if (tab === cur) urlHost?.text = hostOf(url)
+            }
+
+            override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) { tab.canGoBack = canGoBack }
+
+            override fun onCanGoForward(session: GeckoSession, canGoForward: Boolean) {
+                tab.canGoForward = canGoForward
+                if (tab === cur) forwardButton?.alpha = if (canGoForward) 1f else 0.4f
+            }
+        }
+        session.contentDelegate = object : GeckoSession.ContentDelegate {
+            override fun onExternalResponse(session: GeckoSession, response: org.mozilla.geckoview.WebResponse) {
+                startDownload(response, tab.isPrivate)
+            }
+
+            override fun onTitleChange(session: GeckoSession, title: String?) {
+                if (title.isNullOrBlank()) return
+                tab.title = title
+                if (!tab.isPrivate) history.lastOrNull { it.url == tab.url }?.title = title
+            }
+        }
+        session.progressDelegate = object : GeckoSession.ProgressDelegate {
+            override fun onProgressChange(session: GeckoSession, progress: Int) {
+                if (tab !== cur) return
+                progressFill?.let { bar ->
+                    bar.visibility = if (progress in 1..99) View.VISIBLE else View.INVISIBLE
+                    bar.pivotX = 0f
+                    bar.scaleX = progress / 100f
+                    (bar.parent as? View)?.visibility = View.VISIBLE
+                }
+            }
+        }
+        session.open(runtime)
+        tabs.add(tab)
+        cur = tab
+        applySecureFlag()
+        return tab
+    }
+
+    private fun closeTab(tab: Tab) {
+        tab.session.close()
+        tabs.remove(tab)
+        if (cur === tab) {
+            cur = tabs.lastOrNull { it.isPrivate == tab.isPrivate } ?: tabs.lastOrNull()
+            if (geckoView.session != null) geckoView.releaseSession()
+        }
+        applySecureFlag()
+    }
+
     private fun showTabs() {
         resetContent("tabs")
         val page = scrollPage()
-        val open = if (currentUrl.isBlank()) 0 else 1
+        val shown = tabs.filter { it.isPrivate == tabsShowPrivate }
         val header = row().apply { minimumHeight = dp(48) }
         header.addView(label("Tabs", 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(label("$open open", 13f, Palette.MUTED))
-        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            bottomMargin = dp(22)
+        header.addView(label("${tabs.size} open", 13f, Palette.MUTED))
+        page.addView(header, matchWrap())
+
+        // Normal / Private segmented control: inset track, raised active segment.
+        val segment = row().apply {
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            neu(this, 24, Depth.FIELD, inset = true)
+        }
+        listOf(false to "Normal", true to "Private").forEach { (isPrivate, name) ->
+            val active = tabsShowPrivate == isPrivate
+            val cell = label(name, 14f, if (active) Palette.ACCENT else Palette.MUTED, 1).apply {
+                gravity = Gravity.CENTER
+                contentDescription = "$name tabs"
+                setOnClickListener { tabsShowPrivate = isPrivate; showTabs() }
+                if (active) neu(this, 18, Depth.WELL) else isClickable = true
+            }
+            segment.addView(cell, lp(0, dp(40), 1f))
+        }
+        page.addView(segment, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
+            topMargin = dp(18); bottomMargin = dp(22)
         })
-        if (open == 0) {
-            page.addView(emptyState(Icons.TABS, "No open tabs", "Search or pick a quick access tile to open a page."))
-        } else {
-            val title = currentTitle.ifBlank { hostOf(currentUrl) }
-            val close = iconButton(Icons.CLOSE, "Close tab", Palette.MUTED, 40, 14) {
-                currentUrl = ""; currentTitle = ""; canGoBack = false; canGoForward = false
-                session.loadUri("about:blank")
+
+        if (shown.isEmpty()) {
+            page.addView(emptyState(
+                Icons.TABS,
+                if (tabsShowPrivate) "No private tabs" else "No open tabs",
+                if (tabsShowPrivate) "Private tabs keep no history, cookies or site data after they are closed."
+                else "Tap + to open a new tab."
+            ))
+        } else shown.forEach { tab ->
+            val title = tab.title.ifBlank { if (tab.url.isBlank()) "New tab" else hostOf(tab.url) }
+            val close = iconButton(Icons.CLOSE, "Close ${title} tab", Palette.MUTED, 40, 14) {
+                closeTab(tab)
                 showTabs()
             }
+            val leading = if (tab === cur) well(icon(Icons.TABS, Palette.ACCENT, 20)) else letterWell(title)
             page.addView(
-                listRow(letterWell(title), title, hostOf(currentUrl), close) { show("browse") },
-                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
+                listRow(leading, title, hostOf(tab.url), close) {
+                    cur = tab
+                    if (tab.url.isBlank()) showSearch("") else show("browse")
+                },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) }
             )
         }
-        page.addView(label(
-            "Multiple tabs and private tabs are not available yet; Veyra keeps one browsing session for now.",
-            12f, Palette.MUTED
-        ).apply { setPadding(dp(4), dp(10), dp(4), 0) }, matchWrap())
+        val add = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            contentDescription = if (tabsShowPrivate) "New private tab" else "New tab"
+            setOnClickListener {
+                if (newTab(tabsShowPrivate) != null) showSearch("")
+            }
+            neu(this, 28, Depth.BUTTON, pressable = true)
+            addView(icon(Icons.PLUS, Palette.ACCENT, 24))
+        }
+        page.addView(add, lp(dp(56), dp(56)).apply { gravity = Gravity.END; topMargin = dp(6) })
         addMainNav("tabs")
     }
 
@@ -766,7 +854,7 @@ class MainActivity : AppCompatActivity() {
         if (history.isNotEmpty()) {
             header.addView(iconButton(Icons.TRASH, "Clear session history") {
                 history.clear()
-                session.purgeHistory()
+                tabs.forEach { it.session.purgeHistory() }
                 Toast.makeText(this, "Session history cleared", Toast.LENGTH_SHORT).show()
                 showHistory()
             })
@@ -793,16 +881,106 @@ class MainActivity : AppCompatActivity() {
         addMainNav("settings")
     }
 
+    private fun startDownload(response: org.mozilla.geckoview.WebResponse, isPrivate: Boolean) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        downloads.enqueue(response, isPrivate)
+        Toast.makeText(this, "Download started", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Rebuilds the Downloads screen while keeping the scroll position. */
+    private fun refreshDownloads() {
+        val y = (contentArea.getChildAt(0) as? ScrollView)?.scrollY ?: 0
+        showDownloads()
+        (contentArea.getChildAt(0) as? ScrollView)?.post { (contentArea.getChildAt(0) as? ScrollView)?.scrollTo(0, y) }
+    }
+
     private fun showDownloads() {
         resetContent("downloads")
         val page = scrollPage()
-        page.addView(label("Downloads", 22f, Palette.TEXT, 1).apply { minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL },
-            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(22) })
-        page.addView(emptyState(
-            Icons.DOWNLOAD, "No downloads yet",
-            "The download manager is not built yet, so file downloads are not available in this preview."
-        ))
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(label("Downloads", 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (downloads.items.any { it.state == DlState.DONE || it.state == DlState.FAILED }) {
+            header.addView(iconButton(Icons.TRASH, "Clear finished downloads") { downloads.clearFinished() })
+        }
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(22)
+        })
+        if (downloads.items.isEmpty()) {
+            page.addView(emptyState(
+                Icons.DOWNLOAD, "No downloads yet",
+                "Files you download appear here. Downloads run while Veyra is open and are saved to Downloads/Veyra."
+            ))
+        } else downloads.items.toList().forEach { item ->
+            page.addView(downloadCard(item), lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(16)
+            })
+        }
         addMainNav("downloads")
+    }
+
+    private fun downloadCard(item: DownloadItem): View {
+        val card = column().apply {
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            neu(this, 24, Depth.CARD, pressable = item.state == DlState.DONE)
+            if (item.state == DlState.DONE) setOnClickListener {
+                val intent = downloads.openIntent(item)
+                try { if (intent != null) startActivity(intent) else throw IllegalStateException() }
+                catch (_: Exception) { Toast.makeText(this@MainActivity, "No app can open this file", Toast.LENGTH_SHORT).show() }
+            }
+        }
+        val top = row()
+        val iconPaths = if (item.state == DlState.FAILED) Icons.INFO else Icons.DOWNLOAD
+        top.addView(well(icon(iconPaths, if (item.state == DlState.FAILED) Palette.MUTED else Palette.ACCENT, 20)))
+        val text = column().apply { setPadding(dp(14), 0, dp(8), 0) }
+        text.addView(label(if (item.isPrivate) "${item.name} (private)" else item.name, 15f, Palette.TEXT, 1).apply {
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+        })
+        val size = DownloadNaming.formatBytes(item.total)
+        val status = when (item.state) {
+            DlState.RUNNING -> listOf(
+                "${DownloadNaming.formatBytes(item.done)} of $size",
+                DownloadNaming.formatSpeed(item.speed)
+            ).filter { it.isNotBlank() }.joinToString(" · ")
+            DlState.PAUSED -> "Paused · ${DownloadNaming.formatBytes(item.done)} of $size"
+            DlState.DONE -> "Saved · $size"
+            DlState.FAILED -> item.error ?: "Failed"
+        }
+        text.addView(label(status, 13f, Palette.MUTED).apply {
+            maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(0, dp(4), 0, 0)
+        })
+        top.addView(text, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        fun action(paths: List<String>, description: String, filled: Boolean = false, onClick: () -> Unit) {
+            top.addView(iconButton(paths, description, Palette.MUTED, 40, 14, filled, onClick),
+                lp(dp(40), dp(40)).apply { leftMargin = dp(8) })
+        }
+        when (item.state) {
+            DlState.RUNNING -> {
+                action(Icons.PAUSE, "Pause download") { downloads.pause(item) }
+                action(Icons.CLOSE, "Cancel download") { downloads.delete(item, deleteFile = false) }
+            }
+            DlState.PAUSED -> {
+                action(Icons.PLAY, "Resume download", filled = true) { downloads.resume(item) }
+                action(Icons.CLOSE, "Cancel download") { downloads.delete(item, deleteFile = false) }
+            }
+            DlState.FAILED -> {
+                action(Icons.RELOAD, "Retry download") { downloads.resume(item) }
+                action(Icons.TRASH, "Remove from list") { downloads.delete(item, deleteFile = false) }
+            }
+            DlState.DONE -> action(Icons.TRASH, "Delete file") { downloads.delete(item, deleteFile = true) }
+        }
+        card.addView(top)
+        if (item.state == DlState.RUNNING || item.state == DlState.PAUSED) {
+            val fraction = if (item.total > 0) (item.done.toFloat() / item.total).coerceIn(0f, 1f) else 0.3f
+            val track = row().apply { neu(this, 4, Depth.KNOB, inset = true); weightSum = 1000f }
+            track.addView(View(this).apply { setBackgroundColor(Palette.ACCENT) }, lp(0, dp(6), fraction * 1000f))
+            track.addView(View(this), lp(0, dp(6), (1f - fraction) * 1000f))
+            card.addView(track, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)).apply { topMargin = dp(14) })
+        }
+        return card
     }
 
     private fun showSettings() {
@@ -848,7 +1026,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setTrackingProtection(enabled: Boolean) {
         trackingProtectionEnabled = enabled
-        session.settings.setUseTrackingProtection(enabled)
+        tabs.forEach { it.session.settings.setUseTrackingProtection(enabled) }
         prefs.edit().putBoolean("tracking_protection_enabled", enabled).apply()
     }
 
@@ -871,7 +1049,7 @@ class MainActivity : AppCompatActivity() {
             "Clear"
         ) {
             history.clear()
-            session.purgeHistory()
+            tabs.forEach { it.session.purgeHistory() }
             runtime.storageController.clearData(StorageController.ClearFlags.ALL)
             Toast.makeText(this, "Browsing data cleared", Toast.LENGTH_SHORT).show()
         }
@@ -906,6 +1084,12 @@ class MainActivity : AppCompatActivity() {
                 if (currentUrl.isNotBlank()) {
                     bookmarks.add(currentUrl); persistBookmarks()
                     Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                }
+            }
+            if (DownloadNaming.looksLikeDirectFile(currentUrl)) {
+                item(Icons.DOWNLOAD, "Download this file") {
+                    downloads.enqueueUrl(currentUrl, cur?.isPrivate == true)
+                    Toast.makeText(this, "Download started", Toast.LENGTH_SHORT).show()
                 }
             }
             item(Icons.CLOCK, "History") { show("history") }
