@@ -185,7 +185,10 @@ class MainActivity : AppCompatActivity() {
         getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true
 
     private fun applySecureFlag() {
-        if (appLockEnabled || tabs.any { it.isPrivate }) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        val debuggable = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+        // Debug builds skip the flag for private tabs only so CI can screenshot them.
+        val privateSecure = tabs.any { it.isPrivate } && !debuggable
+        if (appLockEnabled || privateSecure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
 
