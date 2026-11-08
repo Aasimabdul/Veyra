@@ -84,9 +84,6 @@ class MainActivity : AppCompatActivity() {
         root.addView(contentArea, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
-        root.addView(geckoView, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
         setContentView(root)
         loadBookmarks()
         showHome()
@@ -203,11 +200,11 @@ class MainActivity : AppCompatActivity() {
     private fun showBrowser() {
         currentPage = "browse"
         contentArea.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         )
         contentArea.visibility = View.VISIBLE
-        geckoView.visibility = View.VISIBLE
         contentArea.removeAllViews()
+        geckoView.visibility = View.VISIBLE
 
         val overlay = column()
         val toolbar = row().apply {
@@ -249,12 +246,12 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "Go forward"
         }, LinearLayout.LayoutParams(dp(48), dp(44)))
         overlay.addView(navigationControls)
-        contentArea.addView(overlay)
-        contentArea.visibility = View.VISIBLE
-        geckoView.visibility = View.VISIBLE
-        // The page view remains below the compact toolbar and is resized by the layout.
-        root.removeView(geckoView)
-        root.addView(geckoView, 1, LinearLayout.LayoutParams(
+        contentArea.addView(overlay, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(6) })
+        // Keep the web renderer inside the content column so the toolbar, page and bottom
+        // navigation have separate, predictable layout bounds on different screen sizes.
+        contentArea.addView(geckoView, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
         addBottomNav("browse")
