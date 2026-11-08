@@ -38,6 +38,7 @@ jobs:
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "version_code=$((n + 1))" >> "$GITHUB_OUTPUT"
           echo "Selected preview tag v$version"
 
       - uses: actions/setup-java@v4
@@ -74,6 +75,11 @@ jobs:
           keytool -list -keystore "$keystore" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" >/dev/null
           echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
           echo "Signing keystore validated (secret values not printed)."
+
+      - name: Set monotonic Android version code
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+        run: sed -i "s/versionCode = 1/versionCode = ${VERSION_CODE}/" android/app/build.gradle.kts
 
       - name: Build signed release APKs and run unit tests
         working-directory: android
