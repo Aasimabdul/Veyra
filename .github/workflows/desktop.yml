@@ -15,72 +15,112 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Browser build (${{ matrix.os }})
+  windows:
+    name: Windows ${{ matrix.arch }} (CEF)
+    runs-on: windows-2022
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - arch: x64
+            cmake_arch: x64
+          - arch: x86
+            cmake_arch: Win32
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install Linux runtime dependencies
-        if: runner.os == 'Linux'
+      - uses: actions/checkout@v4
+
+      - name: Configure (downloads the pinned CEF distribution)
+        shell: pwsh
+        run: cmake -S desktop -B desktop/build -G "Visual Studio 17 2022" -A ${{ matrix.cmake_arch }}
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build desktop/build --config Release --parallel 4
+
+      - name: Smoke test (renders the Veyra start page in Chromium)
+        shell: pwsh
+        run: |
+          $dir = "desktop/build/Release"
+          if (!(Test-Path "$dir/veyra.exe")) { throw "veyra.exe missing" }
+          $out = Join-Path $env:RUNNER_TEMP "smoke.txt"
+          Remove-Item $out -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath "$dir/veyra.exe" -ArgumentList "--smoke-test","--smoke-test-output=$out" -PassThru
+          if (!$p.WaitForExit(90000)) { $p.Kill(); throw "veyra.exe did not exit within 90s" }
+          if (!(Test-Path $out)) { throw "No smoke test result file was written" }
+          $result = Get-Content $out -Raw
+          Write-Host $result
+          if ($result -notmatch "^VEYRA_SMOKE_OK\|.*Chrome/") { throw "Smoke test failed: $result" }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $src = "desktop/build/Release"
+          $name = "veyra-desktop-windows-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item "$src/*" "dist/$name" -Recurse -Force -Exclude "*.lib","*.pdb","*.exp","*.ilk"
+          Copy-Item LICENSE,desktop/third_party_licenses -Destination "dist/$name" -Recurse -Force
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip" -Force
+          (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" | Out-File "dist/$name.zip.sha256" -Encoding ascii
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veyra-desktop-windows-${{ matrix.arch }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: Linux x64 (CEF)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgl1 libegl1 libnss3 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1
-      - name: Install Qt WebEngine
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.3'
-          modules: 'qtwebengine'
-          cache: true
-          arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || '' }}
-      - name: Set up MSVC
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-      - name: Configure
-        run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
+          sudo apt-get install -y build-essential cmake ninja-build libgtk-3-dev libnss3 libxss1 libasound2 xvfb
+
+      - name: Configure (downloads the pinned CEF distribution)
+        run: cmake -S desktop -B desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
       - name: Build
-        run: cmake --build desktop/build --config Release --parallel 2
-      - name: Deploy Qt runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+        run: cmake --build desktop/build --parallel 4
+
+      - name: Smoke test (renders the Veyra start page in Chromium)
         run: |
-          $app = "desktop/build/Release/veyra.exe"
-          if (!(Test-Path $app)) { throw "Expected executable not found: $app" }
-          windeployqt --release --webenginewidgets --no-translations $app
-      - name: Smoke test (Linux)
-        if: runner.os == 'Linux'
-        env:
-          QTWEBENGINE_DISABLE_SANDBOX: '1'
+          set -euo pipefail
+          dir=desktop/build/Release
+          test -x "$dir/veyra"
+          out="$RUNNER_TEMP/smoke.txt"
+          rm -f "$out"
+          # CI containers cannot give chrome-sandbox the SUID bit, so run without it here.
+          xvfb-run -a timeout 90 "$dir/veyra" --no-sandbox --disable-gpu --smoke-test --smoke-test-output="$out" || true
+          test -s "$out"
+          cat "$out"
+          grep -Eq '^VEYRA_SMOKE_OK\|.*Chrome/' "$out"
+
+      - name: Package
         run: |
-          test -x desktop/build/veyra
-          xvfb-run -a timeout 30s desktop/build/veyra --smoke-test
-      - name: Smoke test (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $app = "desktop/build/Release/veyra.exe"
-          $env:QTWEBENGINE_DISABLE_SANDBOX = "1"
-          & $app --smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "Desktop rendering smoke test failed with exit code $LASTEXITCODE" }
-      - name: Upload Linux browser build
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+          set -euo pipefail
+          mkdir -p dist
+          name=veyra-desktop-linux-x64
+          cp -a desktop/build/Release "dist/$name"
+          rm -f "dist/$name"/*.a
+          cp -a LICENSE desktop/third_party_licenses "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: veyra-desktop-linux-x64-preview
-          path: desktop/build/veyra
+          name: veyra-desktop-linux-x64
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
           if-no-files-found: error
-          retention-days: 7
-      - name: Upload Windows browser build
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: veyra-desktop-windows-x64-preview
-          path: desktop/build/Release/
-          if-no-files-found: error
-          retention-days: 7
+          retention-days: 14

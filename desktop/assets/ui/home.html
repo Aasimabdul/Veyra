@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Veyra</title>
+<style>
+  :root { --bg:#0F1A2B; --hi:#182A42; --lo:#070E19; --text:#E8F0FB; --muted:#8FA3BF; --accent:#39D8FF; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         display:flex; flex-direction:column; align-items:center; justify-content:center; gap:28px; padding:24px; }
+  .mark { width:96px; height:96px; border-radius:32px; display:flex; align-items:center; justify-content:center;
+          font-size:44px; font-weight:600; color:var(--accent);
+          box-shadow:8px 8px 18px var(--lo), -8px -8px 18px var(--hi); }
+  h1 { margin:0; font-size:26px; font-weight:600; letter-spacing:.02em; }
+  p  { margin:0; color:var(--muted); font-size:14px; }
+  form { width:min(560px,100%); }
+  input { width:100%; height:52px; border:0; border-radius:26px; padding:0 22px; font-size:15px;
+          color:var(--text); background:var(--bg); outline:none;
+          box-shadow:inset 5px 5px 10px var(--lo), inset -5px -5px 10px var(--hi); }
+  input::placeholder { color:var(--muted); }
+  input:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  .engine { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+  <div class="mark" aria-hidden="true">V</div>
+  <h1>Veyra</h1>
+  <p>Minimal · Fast · Open-source</p>
+  <form id="f" role="search">
+    <input id="q" type="text" autocomplete="off" autofocus aria-label="Search or enter URL" placeholder="Search or enter URL">
+  </form>
+  <div class="engine" id="engine">Chromium engine</div>
+<script>
+  (function () {
+    var ua = navigator.userAgent || "";
+    var m = /Chrome\/([\d.]+)/.exec(ua);
+    document.getElementById("engine").textContent = "Chromium engine" + (m ? " " + m[1] : "");
+    // Deterministic rendering check used by CI: `veyra --smoke-test`.
+    if (/[?&]smoke=1\b/.test(location.search) && document.getElementById("q")) {
+      document.title = "VEYRA_SMOKE_OK|" + ua;
+    }
+    document.getElementById("f").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var v = document.getElementById("q").value.trim();
+      if (!v) return;
+      var url;
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) url = v;
+      else if (/^[^\s]+\.[^\s]{2,}$/.test(v) && v.indexOf(" ") < 0) url = "https://" + v;
+      else url = "https://duckduckgo.com/?q=" + encodeURIComponent(v);
+      location.href = url;
+    });
+  })();
+</script>
+</body>
+</html>

@@ -10,3 +10,6 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+desktop/third_party/cef/
+desktop/build/
+desktop/out/
