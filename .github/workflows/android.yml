@@ -148,6 +148,26 @@ jobs:
             sleep 3
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/tabs-private.png"
             adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page appearance
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/appearance.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_page privacy
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/privacy.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_theme arctic
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/home-arctic.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_theme violet
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/home-violet.png"
+            adb shell am force-stop com.veyra.browser
+            adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_theme crimson
+            sleep 3
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/home-crimson.png"
+            adb shell am force-stop com.veyra.browser
             adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_url https://example.com
             sleep 15
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/browser.png"

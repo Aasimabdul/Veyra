@@ -8,4 +8,6 @@ class Tab(val id: Int, val isPrivate: Boolean, val session: GeckoSession) {
     var title: String = ""
     var canGoBack: Boolean = false
     var canGoForward: Boolean = false
+    var desktop: Boolean = false
+    var blocked: Int = 0
 }

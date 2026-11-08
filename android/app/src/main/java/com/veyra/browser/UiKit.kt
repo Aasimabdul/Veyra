@@ -25,14 +25,25 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
-/** Colour tokens taken from the Veyra neumorphic mockups. */
+/** Active colour tokens. Defaults are the Midnight Navy mockup colours; see [Themes]. */
 object Palette {
-    val BG = Color.parseColor("#0F1A2B")
-    val SHADOW_DARK = Color.parseColor("#070E19")
-    val SHADOW_LIGHT = Color.parseColor("#182A42")
-    val TEXT = Color.parseColor("#E8F0FB")
-    val MUTED = Color.parseColor("#8FA3BF")
-    val ACCENT = Color.parseColor("#39D8FF")
+    var BG = Color.parseColor("#0F1A2B")
+    var SHADOW_DARK = Color.parseColor("#070E19")
+    var SHADOW_LIGHT = Color.parseColor("#182A42")
+    var TEXT = Color.parseColor("#E8F0FB")
+    var MUTED = Color.parseColor("#8FA3BF")
+    var ACCENT = Color.parseColor("#39D8FF")
+    var LIGHT_THEME = false
+
+    fun apply(theme: VeyraTheme) {
+        BG = theme.bg
+        SHADOW_DARK = theme.shadowDark
+        SHADOW_LIGHT = theme.shadowLight
+        TEXT = theme.text
+        MUTED = theme.muted
+        ACCENT = theme.accent
+        LIGHT_THEME = theme.light
+    }
 }
 
 fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
@@ -57,8 +68,9 @@ class NeuDrawable(
     private val offsetPx: Float,
     private val blurPx: Float,
     private val inset: Boolean,
-    private val fill: Int = Palette.BG
+    private val fillOverride: Int? = null
 ) : Drawable() {
+    private val fill: Int get() = fillOverride ?: Palette.BG
     private var cache: Bitmap? = null
     private val extent: Int = if (inset) 0 else ceil(offsetPx + blurPx * 0.9f).toInt()
 
@@ -131,7 +143,7 @@ fun Context.neu(
     depth: Depth = Depth.CARD,
     inset: Boolean = false,
     pressable: Boolean = false,
-    fill: Int = Palette.BG
+    fill: Int? = null
 ): View {
     val radius = dpf(radiusDp.toFloat())
     fun make(isInset: Boolean) = NeuDrawable(radius, dpf(depth.offset), dpf(depth.blur), isInset, fill)
@@ -340,7 +352,7 @@ class NeuSwitch(context: Context) : View(context) {
     var onChange: ((Boolean) -> Unit)? = null
     private val track = NeuDrawable(context.dpf(15f), context.dpf(3f), context.dpf(7f), true)
     private val knobOn = NeuDrawable(context.dpf(13f), context.dpf(2f), context.dpf(4f), false, Palette.ACCENT)
-    private val knobOff = NeuDrawable(context.dpf(13f), context.dpf(2f), context.dpf(4f), false, Color.parseColor("#22364F"))
+    private val knobOff = NeuDrawable(context.dpf(13f), context.dpf(2f), context.dpf(4f), false, ThemeMath.mix(Palette.BG, Palette.TEXT, 0.14f))
 
     init {
         isClickable = true

@@ -47,6 +47,11 @@ class MainActivity : AppCompatActivity() {
     private var nextTabId = 1
     private var tabsShowPrivate = false
     private val maxTabs = 8
+    private var themeKey = Themes.SYSTEM
+    private var blockedTotal = 0
+    private var strictProtection = false
+    private var cookieMode = "trackers"
+    private var javascriptEnabled = true
     private lateinit var geckoView: GeckoView
     private lateinit var root: LinearLayout
     private lateinit var contentArea: LinearLayout
@@ -90,15 +95,22 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, true)
-        window.statusBarColor = Palette.BG
-        window.navigationBarColor = Palette.BG
+        themeKey = prefs.getString("theme", Themes.SYSTEM) ?: Themes.SYSTEM
+        strictProtection = prefs.getBoolean("protection_strict", false)
+        cookieMode = prefs.getString("cookie_mode", "trackers") ?: "trackers"
+        javascriptEnabled = prefs.getBoolean("javascript_enabled", true)
+        applyTheme()
 
         val contentBlockingSettings = ContentBlocking.Settings.Builder()
-            .antiTracking(ContentBlocking.AntiTracking.DEFAULT)
+            .antiTracking(antiTrackingFlags())
+            .cookieBehavior(cookieBehavior())
             .build()
         runtime = GeckoRuntime.create(
             this,
-            GeckoRuntimeSettings.Builder().contentBlocking(contentBlockingSettings).build()
+            GeckoRuntimeSettings.Builder()
+                .contentBlocking(contentBlockingSettings)
+                .javaScriptEnabled(javascriptEnabled)
+                .build()
         )
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
         geckoView = GeckoView(this)
@@ -120,6 +132,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
         applyGutters()
         loadBookmarks()
+        loadHistory()
 
         if (appLockEnabled) {
             locked = true
@@ -135,6 +148,7 @@ class MainActivity : AppCompatActivity() {
     private fun openRequestedScreen() {
         val debuggable = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (!debuggable) return
+        intent?.getStringExtra("veyra_theme")?.let { themeKey = it; applyTheme(); show("home") }
         intent?.getStringExtra("veyra_download")?.let { downloads.enqueueUrl(it, false); show("downloads"); return }
         if (intent?.getBooleanExtra("veyra_private", false) == true) {
             val tab = newTab(true)
@@ -163,6 +177,10 @@ class MainActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         applyGutters()
+        if (themeKey == Themes.SYSTEM) {
+            applyTheme()
+            if (currentPage != "browse") show(currentPage)
+        }
     }
 
     override fun onDestroy() {
@@ -215,6 +233,33 @@ class MainActivity : AppCompatActivity() {
         unlockLauncher.launch(intent)
     }
 
+    // ---- theme & privacy settings -----------------------------------------------------
+
+    private fun systemIsDark() =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private fun applyTheme() {
+        val theme = Themes.resolve(themeKey, systemIsDark())
+        Palette.apply(theme)
+        window.statusBarColor = theme.bg
+        window.navigationBarColor = theme.bg
+        window.setBackgroundDrawable(ColorDrawable(theme.bg))
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = theme.light
+            isAppearanceLightNavigationBars = theme.light
+        }
+        if (::root.isInitialized) root.setBackgroundColor(theme.bg)
+    }
+
+    private fun antiTrackingFlags() =
+        if (strictProtection) ContentBlocking.AntiTracking.STRICT else ContentBlocking.AntiTracking.DEFAULT
+
+    private fun cookieBehavior() = when (cookieMode) {
+        "third_party" -> ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY
+        "all" -> ContentBlocking.CookieBehavior.ACCEPT_NONE
+        else -> ContentBlocking.CookieBehavior.ACCEPT_NON_TRACKERS
+    }
+
     // ---- layout helpers ---------------------------------------------------------------
 
     /** 24dp gutter on phones; content is centred at a readable width on tablets. */
@@ -234,6 +279,8 @@ class MainActivity : AppCompatActivity() {
             "history" -> showHistory()
             "downloads" -> showDownloads()
             "settings" -> showSettings()
+            "appearance" -> showAppearance()
+            "privacy" -> showPrivacy()
             "lock" -> showLock()
             else -> showHome()
         }
@@ -703,8 +750,10 @@ class MainActivity : AppCompatActivity() {
                 if (url.isNullOrBlank() || url == "about:blank") return
                 tab.url = url
                 tab.title = ""
+                tab.blocked = 0
                 if (!tab.isPrivate && history.lastOrNull()?.url != url) {
                     history.add(HistoryEntry(url, "", System.currentTimeMillis()))
+                    persistHistory()
                 }
                 if (tab === cur) urlHost?.text = hostOf(url)
             }
@@ -724,7 +773,18 @@ class MainActivity : AppCompatActivity() {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 if (title.isNullOrBlank()) return
                 tab.title = title
-                if (!tab.isPrivate) history.lastOrNull { it.url == tab.url }?.title = title
+                if (!tab.isPrivate) {
+                    history.lastOrNull { it.url == tab.url }?.title = title
+                    persistHistory()
+                }
+            }
+        }
+        session.contentBlockingDelegate = object : ContentBlocking.Delegate {
+            override fun onContentBlocked(session: GeckoSession, event: ContentBlocking.BlockEvent) {
+                if (event.isBlocking) {
+                    tab.blocked++
+                    blockedTotal++
+                }
             }
         }
         session.progressDelegate = object : GeckoSession.ProgressDelegate {
@@ -861,10 +921,11 @@ class MainActivity : AppCompatActivity() {
         header.addView(label("History", 22f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) },
             lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         if (history.isNotEmpty()) {
-            header.addView(iconButton(Icons.TRASH, "Clear session history") {
+            header.addView(iconButton(Icons.TRASH, "Clear history") {
                 history.clear()
+                persistHistory()
                 tabs.forEach { it.session.purgeHistory() }
-                Toast.makeText(this, "Session history cleared", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "History cleared", Toast.LENGTH_SHORT).show()
                 showHistory()
             })
         }
@@ -872,10 +933,29 @@ class MainActivity : AppCompatActivity() {
             bottomMargin = dp(22)
         })
         if (history.isEmpty()) {
-            page.addView(emptyState(Icons.CLOCK, "Nothing here yet", "Pages you visit in this session appear here. History is not saved after you close Veyra."))
+            page.addView(emptyState(Icons.CLOCK, "Nothing here yet",
+                "Pages you visit in normal tabs appear here. Private tabs are never recorded."))
         } else {
             val timeFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
+            val dayMs = 24L * 60 * 60 * 1000
+            val startOfToday = java.util.Calendar.getInstance().apply {
+                set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+            }.timeInMillis
+            var lastGroup = ""
             history.toList().reversed().forEach { entry ->
+                val group = when {
+                    entry.time >= startOfToday -> "Today"
+                    entry.time >= startOfToday - dayMs -> "Yesterday"
+                    else -> "Earlier"
+                }
+                if (group != lastGroup) {
+                    lastGroup = group
+                    page.addView(label(group.uppercase(), 11f, Palette.MUTED, 1).apply {
+                        letterSpacing = 0.12f
+                        setPadding(dp(4), 0, 0, dp(12))
+                    }, matchWrap())
+                }
                 page.addView(
                     listRow(
                         well(icon(Icons.CLOCK, Palette.MUTED, 20)),
@@ -888,6 +968,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
         addMainNav("settings")
+    }
+
+    private fun loadHistory() {
+        try {
+            val array = JSONArray(prefs.getString("history", "[]") ?: "[]")
+            for (i in 0 until array.length()) {
+                val o = array.getJSONArray(i)
+                val url = o.optString(0)
+                if (DownloadNaming.isHttpUrl(url)) history.add(HistoryEntry(url, o.optString(1), o.optLong(2)))
+            }
+        } catch (_: Exception) {
+            // A corrupt history list is ignored.
+        }
+    }
+
+    private fun persistHistory() {
+        val array = JSONArray()
+        history.takeLast(300).forEach { array.put(JSONArray().put(it.url).put(it.title).put(it.time)) }
+        prefs.edit().putString("history", array.toString()).apply()
     }
 
     private fun startDownload(response: org.mozilla.geckoview.WebResponse, isPrivate: Boolean) {
@@ -992,6 +1091,133 @@ class MainActivity : AppCompatActivity() {
         return card
     }
 
+    private fun showAppearance() {
+        resetContent("appearance")
+        val page = scrollPage()
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(iconButton(Icons.BACK, "Back") { show("settings") })
+        header.addView(label("Appearance", 22f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(22)
+        })
+        fun swatch(color: Int) = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(color)
+                setStroke(dp(1), Palette.MUTED)
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { leftMargin = dp(4) }
+        }
+        fun option(key: String, name: String, subtitle: String, preview: VeyraTheme?) {
+            val selected = themeKey == key
+            val trailing = row().apply {
+                if (preview != null) {
+                    addView(swatch(preview.bg)); addView(swatch(preview.accent)); addView(swatch(preview.text))
+                }
+                if (selected) addView(icon(Icons.SHIELD, Palette.ACCENT, 20).apply {
+                    (layoutParams as LinearLayout.LayoutParams).leftMargin = dp(10)
+                })
+            }
+            page.addView(
+                listRow(well(icon(if (selected) Icons.SHIELD else Icons.SETTINGS, if (selected) Palette.ACCENT else Palette.MUTED, 20)),
+                    name, subtitle, trailing) {
+                    themeKey = key
+                    prefs.edit().putString("theme", key).apply()
+                    applyTheme()
+                    showAppearance()
+                },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
+            )
+        }
+        option(Themes.SYSTEM, "System default", "Midnight Navy in dark mode, Arctic White in light mode", null)
+        Themes.all.forEach { option(it.key, it.name, if (it.light) "Light" else "Dark", it) }
+        addMainNav("settings")
+    }
+
+    private fun showPrivacy() {
+        resetContent("privacy")
+        val page = scrollPage()
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(iconButton(Icons.BACK, "Back") { show("settings") })
+        header.addView(label("Privacy", 22f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(22)
+        })
+
+        // Measured counter: only events Gecko's tracking protection actually reported as blocked.
+        val stats = column().apply {
+            setPadding(dp(22), dp(20), dp(22), dp(20))
+            neu(this, 26, Depth.CARD)
+        }
+        stats.addView(label("Trackers blocked", 13f, Palette.MUTED))
+        stats.addView(label(blockedTotal.toString(), 34f, Palette.ACCENT, 1).apply { setPadding(0, dp(8), 0, dp(4)) })
+        stats.addView(label(
+            "This session, ${cur?.blocked ?: 0} on the current page. Counted from Gecko's tracking-protection events; " +
+                "this is domain-level protection, not a full ad blocker.",
+            12f, Palette.MUTED
+        ).apply { setLineSpacing(0f, 1.2f) })
+        page.addView(stats, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(20)
+        })
+
+        fun choice(title: String, options: List<Triple<String, String, String>>, selected: String, onPick: (String) -> Unit) {
+            page.addView(label(title.uppercase(), 11f, Palette.MUTED, 1).apply {
+                letterSpacing = 0.12f
+                setPadding(dp(4), dp(4), 0, dp(12))
+            }, matchWrap())
+            options.forEach { (key, name, description) ->
+                val on = key == selected
+                page.addView(
+                    listRow(well(icon(if (on) Icons.SHIELD else Icons.SHIELD_OFF, if (on) Palette.ACCENT else Palette.MUTED, 20)),
+                        name, description) { onPick(key) },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
+                )
+            }
+        }
+        choice("Protection level", listOf(
+            Triple("standard", "Standard", "Blocks known trackers. Fewest broken sites."),
+            Triple("strict", "Strict", "Blocks more trackers and content. Some sites may break.")
+        ), if (strictProtection) "strict" else "standard") { key ->
+            strictProtection = key == "strict"
+            prefs.edit().putBoolean("protection_strict", strictProtection).apply()
+            runtime.settings.contentBlocking.setAntiTracking(antiTrackingFlags())
+            showPrivacy()
+        }
+        choice("Cookies", listOf(
+            Triple("trackers", "Block tracking cookies", "Default. Allows normal site logins."),
+            Triple("third_party", "Block third-party cookies", "Can break embedded logins and widgets."),
+            Triple("all", "Block all cookies", "Most sites will not keep you signed in.")
+        ), cookieMode) { key ->
+            cookieMode = key
+            prefs.edit().putString("cookie_mode", key).apply()
+            runtime.settings.contentBlocking.setCookieBehavior(cookieBehavior())
+            showPrivacy()
+        }
+        val js = NeuSwitch(this).apply {
+            checked = javascriptEnabled
+            contentDescription = "JavaScript"
+            onChange = { on ->
+                javascriptEnabled = on
+                prefs.edit().putBoolean("javascript_enabled", on).apply()
+                runtime.settings.setJavaScriptEnabled(on)
+                Toast.makeText(this@MainActivity, "Reload pages for this to take effect", Toast.LENGTH_SHORT).show()
+            }
+        }
+        page.addView(label("SITE CONTROLS", 11f, Palette.MUTED, 1).apply {
+            letterSpacing = 0.12f
+            setPadding(dp(4), dp(4), 0, dp(12))
+        }, matchWrap())
+        page.addView(
+            listRow(well(icon(Icons.SETTINGS, Palette.ACCENT, 20)), "JavaScript", "Turning it off breaks most modern sites.", js),
+            lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
+        )
+        page.addView(label(
+            "Not implemented yet: per-site exceptions and a separate ad-block filter list.",
+            12f, Palette.MUTED
+        ).apply { setPadding(dp(4), dp(4), dp(4), 0) }, matchWrap())
+        addMainNav("settings")
+    }
+
     private fun showSettings() {
         resetContent("settings")
         val page = scrollPage()
@@ -1025,7 +1251,9 @@ class MainActivity : AppCompatActivity() {
             if (secure) "Ask for your device unlock when returning to Veyra." else "Set a screen lock in Android settings first.",
             appLockEnabled && secure
         ) { enabled -> setAppLock(enabled) }
-        actionRow(Icons.CLOCK, "History", "Pages visited this session") { show("history") }
+        actionRow(Icons.SHIELD, "Privacy", "Blocked trackers, cookies, JavaScript") { show("privacy") }
+        actionRow(Icons.SETTINGS, "Appearance", "Theme: ${if (themeKey == Themes.SYSTEM) "System" else Themes.byKey(themeKey).name}") { show("appearance") }
+        actionRow(Icons.CLOCK, "History", "Pages visited in normal tabs") { show("history") }
         actionRow(Icons.TRASH, "Clear browsing data", "Cookies, cache, site data and history") { confirmClearData() }
         actionRow(Icons.INFO, "About Veyra", "Version, engine and licence") { showAbout() }
         addMainNav("settings")
@@ -1054,10 +1282,11 @@ class MainActivity : AppCompatActivity() {
     private fun confirmClearData() {
         showConfirmSheet(
             "Clear browsing data?",
-            "This removes cookies, cache, site data and this session's history. Bookmarks and quick access stay.",
+            "This removes cookies, cache, site data and history. Bookmarks and quick access stay.",
             "Clear"
         ) {
             history.clear()
+            persistHistory()
             tabs.forEach { it.session.purgeHistory() }
             runtime.storageController.clearData(StorageController.ClearFlags.ALL)
             Toast.makeText(this, "Browsing data cleared", Toast.LENGTH_SHORT).show()
@@ -1095,6 +1324,8 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
                 }
             }
+            item(Icons.SEARCH, "Find in page") { showFindSheet() }
+            item(Icons.TABS, if (cur?.desktop == true) "Mobile site" else "Desktop site") { toggleDesktop() }
             if (DownloadNaming.looksLikeDirectFile(currentUrl)) {
                 item(Icons.DOWNLOAD, "Download this file") {
                     downloads.enqueueUrl(currentUrl, cur?.isPrivate == true)
@@ -1103,6 +1334,64 @@ class MainActivity : AppCompatActivity() {
             }
             item(Icons.CLOCK, "History") { show("history") }
             item(Icons.SETTINGS, "Settings") { show("settings") }
+        }
+    }
+
+    private fun toggleDesktop() {
+        val tab = cur ?: return
+        tab.desktop = !tab.desktop
+        tab.session.settings
+            .setUserAgentMode(
+                if (tab.desktop) org.mozilla.geckoview.GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
+                else org.mozilla.geckoview.GeckoSessionSettings.USER_AGENT_MODE_MOBILE
+            )
+            .setViewportMode(
+                if (tab.desktop) org.mozilla.geckoview.GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
+                else org.mozilla.geckoview.GeckoSessionSettings.VIEWPORT_MODE_MOBILE
+            )
+        tab.session.reload()
+        Toast.makeText(this, if (tab.desktop) "Desktop site" else "Mobile site", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showFindSheet() {
+        val tab = cur ?: return
+        val finder = tab.session.finder
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Find in page", 18f, Palette.TEXT, 1), matchWrap())
+            val result = label("", 13f, Palette.MUTED).apply { setPadding(dp(6), dp(12), 0, dp(14)) }
+            val input = EditText(this).apply {
+                hint = "Search this page"
+                setHintTextColor(Palette.MUTED)
+                setTextColor(Palette.TEXT)
+                textSize = 15f
+                setSingleLine(true)
+                imeOptions = EditorInfo.IME_ACTION_SEARCH
+                setPadding(dp(20), 0, dp(20), 0)
+                neu(this, 26, Depth.FIELD, inset = true)
+            }
+            fun find(backwards: Boolean) {
+                val query = input.text.toString()
+                if (query.isBlank()) { finder.clear(); result.text = ""; return }
+                finder.find(query, if (backwards) GeckoSession.FINDER_FIND_BACKWARDS else 0)
+                    .accept({ r ->
+                        result.text = when {
+                            r == null -> ""
+                            !r.found -> "No matches"
+                            else -> "${r.current} of ${r.total}"
+                        }
+                    }, { result.text = "Find failed" })
+            }
+            input.setOnEditorActionListener { _, _, _ -> find(false); true }
+            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(16) })
+            sheet.addView(result, matchWrap())
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Prev") { find(true) })
+            actions.addView(textButton("Next", primary = true) { find(false) },
+                lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+            actions.addView(textButton("Done") { dialog.dismiss() },
+                lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+            sheet.addView(actions, matchWrap())
+            dialog.setOnDismissListener { finder.clear() }
         }
     }
 
