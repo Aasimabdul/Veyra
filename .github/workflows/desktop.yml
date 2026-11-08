@@ -1,4 +1,4 @@
-name: Desktop shell CI
+name: Desktop Browser CI
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    name: Build (${{ matrix.os }})
+    name: Browser build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -25,42 +25,62 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Configure
-        run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build desktop/build --config Release --parallel 2
-
-      - name: Smoke test (Linux)
+      - name: Install Linux runtime dependencies
         if: runner.os == 'Linux'
         run: |
-          test -x desktop/build/veyra
-          ./desktop/build/veyra
-
-      - name: Smoke test (Windows)
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libegl1 libnss3 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1
+      - name: Install Qt WebEngine
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          modules: 'qtwebengine'
+          cache: true
+          arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || '' }}
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Configure
+        run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build desktop/build --config Release --parallel 2
+      - name: Deploy Qt runtime (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $app = "desktop/build/Release/veyra.exe"
           if (!(Test-Path $app)) { throw "Expected executable not found: $app" }
-          & $app
-          if ($LASTEXITCODE -ne 0) { throw "Desktop smoke test failed with exit code $LASTEXITCODE" }
-
-      - name: Upload Linux shell artifact
+          windeployqt --release --webenginewidgets --no-translations $app
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        env:
+          QTWEBENGINE_DISABLE_SANDBOX: '1'
+        run: |
+          test -x desktop/build/veyra
+          xvfb-run -a timeout 30s desktop/build/veyra --smoke-test
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $app = "desktop/build/Release/veyra.exe"
+          $env:QTWEBENGINE_DISABLE_SANDBOX = "1"
+          & $app --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "Desktop rendering smoke test failed with exit code $LASTEXITCODE" }
+      - name: Upload Linux browser build
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: veyra-desktop-linux-shell
+          name: veyra-desktop-linux-x64-preview
           path: desktop/build/veyra
           if-no-files-found: error
           retention-days: 7
-
-      - name: Upload Windows shell artifact
+      - name: Upload Windows browser build
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: veyra-desktop-windows-shell
-          path: desktop/build/Release/veyra.exe
+          name: veyra-desktop-windows-x64-preview
+          path: desktop/build/Release/
           if-no-files-found: error
           retention-days: 7
