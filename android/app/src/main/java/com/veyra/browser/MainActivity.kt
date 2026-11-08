@@ -98,48 +98,69 @@ class MainActivity : AppCompatActivity() {
         contentArea.visibility = View.VISIBLE
         contentArea.removeAllViews()
 
+        // All home content lives in a scroll container; bottom navigation remains fixed.
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
+        val page = column().apply { setPadding(0, dp(4), 0, dp(18)) }
+        scroll.addView(page, ScrollView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        contentArea.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
         val header = row()
-        header.addView(label("Veyra", 25, true), LinearLayout.LayoutParams(0, dp(52), 1f))
+        header.addView(label("Veyra", 26, true), LinearLayout.LayoutParams(0, dp(52), 1f))
         header.addView(chip("☆", 42) { showBookmarks() }.apply {
             contentDescription = "Open bookmarks"
-        })
-        header.addView(chip("◉", 42) { showSettings() }.apply {
+        }, LinearLayout.LayoutParams(dp(46), dp(44)).apply { marginEnd = dp(8) })
+        header.addView(chip("⚙", 42) { showSettings() }.apply {
             contentDescription = "Open settings"
-        })
-        contentArea.addView(header)
+        }, LinearLayout.LayoutParams(dp(46), dp(44)))
+        page.addView(header)
 
         val brand = column().apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(16), 0, dp(22))
+            setPadding(0, dp(18), 0, dp(20))
         }
-        brand.addView(label("V", 54, true, cyan).apply { gravity = Gravity.CENTER })
-        brand.addView(label("Minimal · Fast · Open-source", 13, false, muted).apply {
+        brand.addView(label("V", 58, true, cyan).apply {
             gravity = Gravity.CENTER
+            setShadowLayer(dp(12).toFloat(), 0f, 0f, Color.rgb(0, 110, 255))
         })
-        contentArea.addView(brand)
+        brand.addView(label("Minimal · Fast · Private", 13, false, muted).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(3), 0, 0)
+        })
+        page.addView(brand)
 
         address = EditText(this).apply {
             hint = "⌕  Search or enter URL"
             setSingleLine(true)
-            textSize = 14f
+            textSize = 15f
             setTextColor(white)
             setHintTextColor(muted)
-            background = surface(panelLight, 28)
+            background = surface(panelLight, 30)
             imeOptions = EditorInfo.IME_ACTION_GO
             setPadding(dp(18), dp(14), dp(18), dp(14))
             inputType = android.text.InputType.TYPE_CLASS_TEXT or
                 android.text.InputType.TYPE_TEXT_VARIATION_URI
+            setOnFocusChangeListener { _, focused ->
+                if (focused && currentPage == "home") showSearch()
+            }
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_NULL) {
                     navigate(text.toString()); true
                 } else false
             }
         }
-        contentArea.addView(address, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(54)
+        page.addView(address, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)
         ).apply { bottomMargin = dp(24) })
 
-        contentArea.addView(label("QUICK ACCESS", 11, true, muted).apply {
+        page.addView(label("QUICK ACCESS", 11, true, muted).apply {
             letterSpacing = .14f
             setPadding(dp(4), 0, 0, dp(12))
         })
@@ -157,42 +178,44 @@ class MainActivity : AppCompatActivity() {
                 val tile = column().apply {
                     gravity = Gravity.CENTER
                     background = surface(panel, 22)
-                    elevation = dp(5).toFloat()
+                    elevation = dp(3).toFloat()
                     setPadding(dp(4), dp(12), dp(4), dp(10))
                     isClickable = true
                     isFocusable = true
                     setOnClickListener {
                         if (item[2].isNotBlank()) navigate(item[2])
-                        else Toast.makeText(this@MainActivity, "Quick links editor will be added in the next milestone", Toast.LENGTH_SHORT).show()
+                        else Toast.makeText(this@MainActivity, "Custom quick links are coming next", Toast.LENGTH_SHORT).show()
                     }
                 }
                 tile.addView(label(item[0], 23, true, cyan).apply { gravity = Gravity.CENTER })
                 tile.addView(label(item[1], 11, false, white).apply { gravity = Gravity.CENTER })
                 line.addView(tile, LinearLayout.LayoutParams(0, dp(82), 1f).apply {
-                    marginEnd = dp(9)
-                    bottomMargin = dp(10)
+                    marginEnd = dp(8)
+                    bottomMargin = dp(9)
                 })
             }
-            contentArea.addView(line)
+            page.addView(line)
         }
 
         val continueCard = column().apply {
             background = surface(panel, 24)
-            elevation = dp(4).toFloat()
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            elevation = dp(3).toFloat()
+            setPadding(dp(16), dp(15), dp(16), dp(15))
+            isClickable = true
+            isFocusable = true
             setOnClickListener {
                 if (currentUrl.isNotBlank()) navigate(currentUrl)
-                else navigate("https://www.mozilla.org")
+                else address.requestFocus()
             }
         }
         continueCard.addView(label("▣   Continue browsing", 15, true))
         continueCard.addView(label(
-            if (currentUrl.isBlank()) "Open your first page" else currentUrl,
+            if (currentUrl.isBlank()) "Your last visited page appears here" else currentUrl,
             12, false, muted
         ).apply { setPadding(dp(2), dp(6), 0, 0) })
-        contentArea.addView(continueCard, LinearLayout.LayoutParams(
+        page.addView(continueCard, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(16) })
+        ).apply { topMargin = dp(12) })
 
         addBottomNav("home")
     }
@@ -454,6 +477,56 @@ class MainActivity : AppCompatActivity() {
         addBottomNav("settings")
     }
 
+    private fun showSearch() {
+        currentPage = "search"
+        geckoView.visibility = View.GONE
+        contentArea.visibility = View.VISIBLE
+        contentArea.removeAllViews()
+        val searchPage = column()
+        val header = row()
+        header.addView(chip("←", 42) { showHome() }, LinearLayout.LayoutParams(dp(48), dp(44)))
+        header.addView(label("Search", 22, true), LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+            marginStart = dp(12)
+        })
+        searchPage.addView(header)
+        val query = EditText(this).apply {
+            hint = "Search or enter URL"
+            textSize = 15f
+            setTextColor(white)
+            setHintTextColor(muted)
+            background = surface(panelLight, 28)
+            setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_GO
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_NULL) {
+                    navigate(text.toString()); true
+                } else false
+            }
+        }
+        searchPage.addView(query, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(54)
+        ).apply { topMargin = dp(16); bottomMargin = dp(18) })
+        searchPage.addView(label("QUICK SEARCH", 11, true, muted).apply {
+            setPadding(dp(4), 0, 0, dp(10))
+        })
+        listOf("Google" to "https://google.com", "DuckDuckGo" to "https://duckduckgo.com",
+            "Wikipedia" to "https://wikipedia.org").forEach { (name, url) ->
+            searchPage.addView(chip("⌕   $name", 48) { navigate(url) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply {
+                    bottomMargin = dp(8)
+                })
+        }
+        searchPage.addView(label("Recent searches are not saved yet.", 12, false, muted).apply {
+            setPadding(dp(4), dp(14), 0, 0)
+        })
+        contentArea.addView(searchPage, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        addBottomNav("search")
+        query.requestFocus()
+    }
+
     private fun addBottomNav(selected: String) {
         val nav = row().apply {
             gravity = Gravity.CENTER
@@ -463,7 +536,7 @@ class MainActivity : AppCompatActivity() {
         }
         val items = listOf(
             Triple("⌂", "home", "Home"),
-            Triple("◷", "history", "History"),
+            Triple("⌕", "search", "Search"),
             Triple("▢", "tabs", "Tabs"),
             Triple("↓", "downloads", "Downloads"),
             Triple("☷", "settings", "Settings")
@@ -479,7 +552,7 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
                     when (key) {
                         "home" -> showHome()
-                        "history" -> showHistory()
+                        "search" -> showSearch()
                         "tabs" -> showTabs()
                         "downloads" -> showDownloads()
                         else -> showSettings()
