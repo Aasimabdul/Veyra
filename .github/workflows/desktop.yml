@@ -34,7 +34,7 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
-          modules: 'qtwebengine;qtwebchannel'
+          modules: 'qtwebengine'
           cache: true
           arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || '' }}
       - name: Set up MSVC
