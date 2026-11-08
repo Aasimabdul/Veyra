@@ -76,10 +76,17 @@ jobs:
           echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
           echo "Signing keystore validated (secret values not printed)."
 
-      - name: Set monotonic Android version code
+      - name: Set Android versionName and monotonic versionCode
         env:
+          VERSION: ${{ steps.version.outputs.version }}
           VERSION_CODE: ${{ steps.version.outputs.version_code }}
-        run: sed -i "s/versionCode = 1/versionCode = ${VERSION_CODE}/" android/app/build.gradle.kts
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i "s/versionCode = [0-9]*/versionCode = ${VERSION_CODE}/" android/app/build.gradle.kts
+          sed -i "s/versionName = \"[^\"]*\"/versionName = \"${VERSION}\"/" android/app/build.gradle.kts
+          grep -F "versionCode = ${VERSION_CODE}" android/app/build.gradle.kts
+          grep -F "versionName = \"${VERSION}\"" android/app/build.gradle.kts
 
       - name: Build signed release APKs and run unit tests
         working-directory: android
@@ -106,8 +113,9 @@ jobs:
             test -s "$apk"
             size=$(stat -c %s "$apk")
             if [ "$size" -ge "$max_bytes" ]; then echo "::error::$apk is >= 150 MB"; exit 1; fi
-            "$tools/aapt2" dump badging "$apk" | grep -q "package: name='com.veyra.browser'"
-            "$tools/aapt2" dump badging "$apk" | grep -q "native-code: '$abi'"
+            badging=$("$tools/aapt2" dump badging "$apk")
+            printf '%s\n' "$badging" | grep -q "package: name='com.veyra.browser' versionName='$VERSION'"
+            printf '%s\n' "$badging" | grep -q "native-code: '$abi'"
             "$tools/zipalign" -c -v 4 "$apk"
             cert_output=$("$tools/apksigner" verify --verbose --print-certs "$apk")
             cert=$(printf '%s\n' "$cert_output" | awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print $2; exit}')
@@ -167,7 +175,7 @@ jobs:
           body: |
             ## Veyra v${{ steps.version.outputs.version }} — Android early preview
 
-            These Android APKs were built and signed by GitHub Actions. CI verifies the package ID, ABI, signature certificate consistency, ZIP alignment, APK size (<150 MB), unit tests, lint, and an x86_64 emulator install/launch smoke test.
+            These Android APKs were built and signed by GitHub Actions. CI verifies the package ID, versionName, ABI, signature certificate consistency, ZIP alignment, APK size (<150 MB), unit tests, lint, and an x86_64 emulator install/launch smoke test.
 
             ### Downloads
             - ARM64 Android: `veyra-${{ steps.version.outputs.version }}-android-arm64-v8a.apk`
@@ -177,6 +185,6 @@ jobs:
             ### Important limits
             - This is an early preview, not a production-hardened privacy browser. See README for implemented features and known limitations.
             - Windows and Linux desktop packages are intentionally not attached: the current desktop source is only a C++ shell scaffold and does not render web pages. We will not publish it as a working browser until a real engine is integrated and smoke-tested.
-            - Windows x86 remains under evaluation. Qt WebEngine's current official desktop target list is x86_64, while CEF documents Win32 builds; CEF integration and security-update packaging still need implementation.
+            - Windows x86 support remains unverified for a current security-supported CEF binary; no Windows x86 executable will be published until verified.
             - Windows packages, when available, will be unsigned unless a signing certificate is acquired.
             - Emulator CI is not a substitute for physical-device testing.
