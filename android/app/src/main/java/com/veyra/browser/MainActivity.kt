@@ -1340,15 +1340,13 @@ class MainActivity : AppCompatActivity() {
     private fun toggleDesktop() {
         val tab = cur ?: return
         tab.desktop = !tab.desktop
-        tab.session.settings
-            .setUserAgentMode(
-                if (tab.desktop) org.mozilla.geckoview.GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
-                else org.mozilla.geckoview.GeckoSessionSettings.USER_AGENT_MODE_MOBILE
-            )
-            .setViewportMode(
-                if (tab.desktop) org.mozilla.geckoview.GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
-                else org.mozilla.geckoview.GeckoSessionSettings.VIEWPORT_MODE_MOBILE
-            )
+        val settings = tab.session.settings
+        settings.userAgentMode =
+            if (tab.desktop) org.mozilla.geckoview.GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
+            else org.mozilla.geckoview.GeckoSessionSettings.USER_AGENT_MODE_MOBILE
+        settings.viewportMode =
+            if (tab.desktop) org.mozilla.geckoview.GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
+            else org.mozilla.geckoview.GeckoSessionSettings.VIEWPORT_MODE_MOBILE
         tab.session.reload()
         Toast.makeText(this, if (tab.desktop) "Desktop site" else "Mobile site", Toast.LENGTH_SHORT).show()
     }
