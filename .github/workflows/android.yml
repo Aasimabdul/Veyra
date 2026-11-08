@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-ci-${{ github.ref }}
@@ -135,6 +135,17 @@ jobs:
             adb shell am start -W -n com.veyra.browser/.MainActivity --es veyra_url https://example.com
             sleep 15
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/shots/browser.png"
+      - name: Publish UI screenshots to ci-screenshots branch
+        if: always() && github.ref == 'refs/heads/main' && hashFiles('shots/*.png') != ''
+        run: |
+          cd shots
+          git init -q
+          git checkout -q -b ci-screenshots
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -qm "UI screenshots for ${{ github.sha }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-screenshots
       - name: Upload UI screenshots
         if: always()
         uses: actions/upload-artifact@v4
