@@ -1,5 +1,6 @@
 package com.veyra.browser
 
+import android.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -174,14 +175,15 @@ class MainActivity : AppCompatActivity() {
             letterSpacing = .14f
             setPadding(dp(4), 0, 0, dp(12))
         })
-        val shortcuts = listOf(
+        val shortcuts = mutableListOf(
             listOf("▶", "YouTube", "https://m.youtube.com"),
             listOf("G", "Google", "https://google.com"),
             listOf("●", "GitHub", "https://github.com"),
             listOf("◉", "Reddit", "https://reddit.com"),
-            listOf("𝕏", "X", "https://x.com"),
-            listOf("+", "Add", "")
+            listOf("𝕏", "X", "https://x.com")
         )
+        shortcuts.addAll(loadQuickShortcuts())
+        shortcuts.add(listOf("+", "Add", ""))
         shortcuts.chunked(3).forEach { group ->
             val line = row().apply {
                 layoutParams = LinearLayout.LayoutParams(
@@ -198,8 +200,11 @@ class MainActivity : AppCompatActivity() {
                     isClickable = true
                     isFocusable = true
                     setOnClickListener {
-                        if (item[2].isNotBlank()) navigate(item[2])
-                        else Toast.makeText(this@MainActivity, "Custom quick links are coming next", Toast.LENGTH_SHORT).show()
+                        if (item[2].isNotBlank()) {
+                            navigate(item[2])
+                        } else {
+                            showAddShortcutDialog()
+                        }
                     }
                 }
                 tile.addView(label(item[0], 23, true, cyan).apply {
@@ -391,6 +396,78 @@ class MainActivity : AppCompatActivity() {
         }
         makeContentScrollable()
         addBottomNav("bookmarks")
+    }
+
+    private fun showAddShortcutDialog() {
+        val form = column().apply { setPadding(dp(4), dp(4), dp(4), dp(4)) }
+        val nameInput = EditText(this).apply {
+            hint = "Shortcut name"
+            setSingleLine(true)
+            setTextColor(white)
+            setHintTextColor(muted)
+        }
+        val urlInput = EditText(this).apply {
+            hint = "https://example.com"
+            setSingleLine(true)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_URI
+            setTextColor(white)
+            setHintTextColor(muted)
+        }
+        form.addView(nameInput, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
+        ))
+        form.addView(urlInput, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
+        ).apply { topMargin = dp(8) })
+        AlertDialog.Builder(this)
+            .setTitle("Add quick access")
+            .setView(form)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val name = nameInput.text.toString().trim()
+                val resolved = AddressResolver.resolve(urlInput.text.toString().trim())
+                if (name.isBlank() || resolved == null ||
+                    !(resolved.startsWith("https://", true) || resolved.startsWith("http://", true))
+                ) {
+                    Toast.makeText(this, "Enter a name and a valid website URL", Toast.LENGTH_SHORT).show()
+                } else {
+                    val custom = loadQuickShortcuts().toMutableList()
+                    custom.removeAll { it[1].equals(name, ignoreCase = true) || it[2].equals(resolved, ignoreCase = true) }
+                    custom.add(listOf("↗", name, resolved))
+                    saveQuickShortcuts(custom)
+                    showHome()
+                }
+            }
+            .show()
+    }
+
+    private fun loadQuickShortcuts(): List<List<String>> {
+        val raw = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
+            .getString("quick_shortcuts", "[]") ?: "[]"
+        return try {
+            val saved = JSONArray(raw)
+            (0 until saved.length()).mapNotNull { index ->
+                val item = saved.optJSONArray(index) ?: return@mapNotNull null
+                val name = item.optString(0, "").trim()
+                val url = item.optString(1, "").trim()
+                if (name.isNotBlank() && (url.startsWith("https://", true) || url.startsWith("http://", true))) {
+                    listOf("↗", name, url)
+                } else null
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveQuickShortcuts(shortcuts: List<List<String>>) {
+        val saved = JSONArray()
+        shortcuts.forEach { item ->
+            saved.put(JSONArray().put(item[1]).put(item[2]))
+        }
+        getSharedPreferences("veyra_preferences", MODE_PRIVATE).edit()
+            .putString("quick_shortcuts", saved.toString())
+            .apply()
     }
 
     private fun loadBookmarks() {
