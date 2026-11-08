@@ -1,0 +1,176 @@
+name: Veyra First Release (Android)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: veyra-first-release
+  cancel-in-progress: false
+
+env:
+  GRADLE_VERSION: "9.6.0"
+  BUILD_TOOLS_VERSION: "36.0.0"
+
+jobs:
+  android-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Choose unused preview tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          base=0.1.0
+          version="$base"
+          n=0
+          while git rev-parse -q --verify "refs/tags/v$version" >/dev/null; do
+            n=$((n + 1))
+            version="0.1.$n"
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Selected preview tag v$version"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-37.2" "build-tools;${BUILD_TOOLS_VERSION}"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Validate signing secrets and prepare keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!key:-}" ]; then echo "::error::Missing required Actions secret: $key"; exit 1; fi
+          done
+          keystore="$RUNNER_TEMP/veyra-release.jks"
+          if ! printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$keystore" 2>/dev/null; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not valid base64"; exit 1
+          fi
+          test -s "$keystore"
+          keytool -list -keystore "$keystore" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+          echo "Signing keystore validated (secret values not printed)."
+
+      - name: Build signed release APKs and run unit tests
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: gradle :app:assembleRelease :app:testDebugUnitTest :app:lintRelease --stacktrace
+
+      - name: Verify and stage the two Android release APKs
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+          source_dir=android/app/build/outputs/apk/release
+          out=release-assets
+          mkdir -p "$out"
+          max_bytes=$((150 * 1024 * 1024))
+          expected_cert=""
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            apk="$source_dir/app-$abi-release.apk"
+            test -s "$apk"
+            size=$(stat -c %s "$apk")
+            if [ "$size" -ge "$max_bytes" ]; then echo "::error::$apk is >= 150 MB"; exit 1; fi
+            "$tools/aapt2" dump badging "$apk" | grep -q "package: name='com.veyra.browser'"
+            "$tools/aapt2" dump badging "$apk" | grep -q "native-code: '$abi'"
+            "$tools/zipalign" -c -v 4 "$apk"
+            cert_output=$("$tools/apksigner" verify --verbose --print-certs "$apk")
+            cert=$(printf '%s\n' "$cert_output" | awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print $2; exit}')
+            test -n "$cert"
+            if [ -z "$expected_cert" ]; then expected_cert="$cert"; elif [ "$cert" != "$expected_cert" ]; then echo "::error::ABI APKs have different signing certificates"; exit 1; fi
+            echo "$abi: $size bytes; certificate SHA-256 $cert"
+            if [ "$abi" != "x86_64" ]; then
+              cp "$apk" "$out/veyra-$VERSION-android-$abi.apk"
+            fi
+          done
+          (cd "$out" && sha256sum ./*.apk > SHA256SUMS.txt)
+          ls -lh "$out"
+
+      - name: Grant runner access to KVM
+        run: |
+          if [ ! -e /dev/kvm ]; then echo "::error::/dev/kvm unavailable for emulator smoke test"; exit 1; fi
+          sudo chown "$(id -un)" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+
+      - name: Install and launch signed release APK in emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -camera-back none -camera-front none
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: false
+          disable-animations: true
+          script: |
+            test -s "$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-x86_64-release.apk"
+            adb wait-for-device
+            adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+            adb install -r "$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-x86_64-release.apk"
+            adb shell am start -W -n com.veyra.browser/.MainActivity
+            sleep 8
+            adb shell pidof com.veyra.browser
+            if adb logcat -d -t 5000 | grep -E "FATAL EXCEPTION|Fatal signal"; then echo "::error::Veyra release APK crashed"; exit 1; fi
+
+      - name: Upload release workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veyra-${{ steps.version.outputs.version }}-android-release
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Veyra v${{ steps.version.outputs.version }} — Early Preview
+          prerelease: true
+          generate_release_notes: false
+          files: release-assets/*
+          body: |
+            ## Veyra v${{ steps.version.outputs.version }} — Android early preview
+
+            These Android APKs were built and signed by GitHub Actions. CI verifies the package ID, ABI, signature certificate consistency, ZIP alignment, APK size (<150 MB), unit tests, lint, and an x86_64 emulator install/launch smoke test.
+
+            ### Downloads
+            - ARM64 Android: `veyra-${{ steps.version.outputs.version }}-android-arm64-v8a.apk`
+            - 32-bit ARM Android: `veyra-${{ steps.version.outputs.version }}-android-armeabi-v7a.apk`
+            - `SHA256SUMS.txt` provides integrity hashes.
+
+            ### Important limits
+            - This is an early preview, not a production-hardened privacy browser. See README for implemented features and known limitations.
+            - Windows and Linux desktop packages are intentionally not attached: the current desktop source is only a C++ shell scaffold and does not render web pages. We will not publish it as a working browser until a real engine is integrated and smoke-tested.
+            - Windows x86 remains under evaluation. Qt WebEngine's current official desktop target list is x86_64, while CEF documents Win32 builds; CEF integration and security-update packaging still need implementation.
+            - Windows packages, when available, will be unsigned unless a signing certificate is acquired.
+            - Emulator CI is not a substitute for physical-device testing.
