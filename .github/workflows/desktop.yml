@@ -146,7 +146,7 @@ jobs:
           APPRUN
           sed -i 's/^          //' "$appdir/AppRun"
           chmod +x "$appdir/AppRun"
-          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run "$appdir" dist/Veyra-x86_64.AppImage
           (cd dist && sha256sum Veyra-x86_64.AppImage > Veyra-x86_64.AppImage.sha256)
