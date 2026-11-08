@@ -139,18 +139,14 @@ jobs:
           disable-linux-hw-accel: false
           disable-animations: true
           script: |
-            apk="$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-x86_64-release.apk"
-            test -s "$apk"
+            test -s "$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-x86_64-release.apk"
             adb wait-for-device
             adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
-            adb install -r "$apk"
+            adb install -r "$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-x86_64-release.apk"
             adb shell am start -W -n com.veyra.browser/.MainActivity
             sleep 8
             adb shell pidof com.veyra.browser
-            if adb logcat -d -t 5000 | grep -E "FATAL EXCEPTION|Fatal signal"; then
-              echo "::error::Veyra release APK crashed during emulator smoke test"
-              exit 1
-            fi
+            if adb logcat -d -t 5000 | grep -E "FATAL EXCEPTION|Fatal signal"; then echo "::error::Veyra release APK crashed during emulator smoke test"; exit 1; fi
 
       - uses: actions/upload-artifact@v4
         with:
