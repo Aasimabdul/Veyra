@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity() {
     private var systemInsetBottom = 0
     private var imeInsetBottom = 0
     private var urlHost: TextView? = null
+    private var vpnStatusLabel: TextView? = null
     private var backButton: View? = null
     private var forwardButton: View? = null
     private var progressFill: View? = null
@@ -195,6 +196,11 @@ class MainActivity : AppCompatActivity() {
         downloads = DownloadCenter(this) {
             if (currentPage == "downloads") refreshDownloads()
         }
+        VpnManager.get(this).listener = {
+            val vpn = VpnManager.get(this)
+            vpnStatusLabel?.text = if (vpn.status == VpnManager.Status.ON) "VPN ON" else "VPN"
+            if (currentPage == "vpn") showVpn()
+        }
 
         appLockEnabled = prefs.getBoolean("app_lock_enabled", false) && deviceIsSecure()
         applySecureFlag()
@@ -257,6 +263,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- lifecycle / lock -------------------------------------------------------------
+
+    override fun onResume() {
+        super.onResume()
+        if (::downloads.isInitialized) VpnManager.get(this).refresh()
+    }
 
     override fun onStop() {
         if (appLockEnabled && !authInProgress) locked = true
@@ -412,6 +423,7 @@ class MainActivity : AppCompatActivity() {
         if (page != "private") vaultUnlocked = false
         applySecureFlag()
         urlHost = null
+        vpnStatusLabel = null
         backButton = null
         forwardButton = null
         progressFill = null
@@ -618,6 +630,7 @@ class MainActivity : AppCompatActivity() {
                     setStroke(dp(1), ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.52f))
                 }
             }
+            vpnStatusLabel = badge
             addView(badge)
         }
         pill.addView(vpnButton, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
