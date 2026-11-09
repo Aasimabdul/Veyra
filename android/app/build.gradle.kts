@@ -70,6 +70,7 @@ dependencies {
     implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
+    implementation("androidx.media3:media3-exoplayer-dash:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
     // WireGuard userspace engine for the VPN screen (user supplies their own .conf).
     implementation("com.wireguard.android:tunnel:1.0.20230706")
