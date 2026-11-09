@@ -100,7 +100,7 @@ jobs:
             adb install -r "$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-x86_64-debug.apk"
             adb shell am start -W -n com.veyra.browser/.MainActivity
             sleep 8
-            if ! adb shell pidof com.veyra.browser; then adb logcat -d -t 600 | grep -iE "AndroidRuntime|FATAL|Caused by|at com.veyra|Fatal signal|am_proc_died|am_kill|lowmemorykiller|DEBUG|tombstone|ActivityManager.*(died|kill)|Process .* has died" | head -80; exit 1; fi
+            if ! adb shell pidof com.veyra.browser; then adb logcat -b crash -d | head -60; adb logcat -d | grep -iE "AndroidRuntime|FATAL|Caused by|at com.veyra|Fatal signal|am_proc_died|am_kill|lowmemorykiller|DEBUG|tombstone|ActivityManager.*(died|kill)|Process .* has died" | head -80; exit 1; fi
             if adb logcat -d -t 5000 | grep -E "FATAL EXCEPTION|Fatal signal"; then echo "::error::Veyra crashed during emulator smoke test"; exit 1; fi
             mkdir -p "$GITHUB_WORKSPACE/shots"
             adb shell am force-stop com.veyra.browser
