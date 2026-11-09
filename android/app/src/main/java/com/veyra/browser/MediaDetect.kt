@@ -23,7 +23,7 @@ object MediaDetect {
 
     private val videoExt = setOf("mp4", "m4v", "webm", "mkv", "mov", "3gp", "ogv")
     private val audioExt = setOf("mp3", "m4a", "aac", "ogg", "oga", "opus", "wav", "flac")
-    private const val MAX_ITEMS = 20
+    private const val MAX_ITEMS = 60
 
     fun extensionOf(url: String): String {
         val path = url.substringBefore('#').substringBefore('?')
@@ -35,7 +35,7 @@ object MediaDetect {
     fun kindFromExtension(url: String): DetectedMedia.Kind? = when (extensionOf(url)) {
         in videoExt -> DetectedMedia.Kind.VIDEO
         in audioExt -> DetectedMedia.Kind.AUDIO
-        "m3u8" -> DetectedMedia.Kind.STREAM
+        "m3u8", "mpd" -> DetectedMedia.Kind.STREAM
         else -> null
     }
 
@@ -52,7 +52,6 @@ object MediaDetect {
                     if (url.startsWith("blob:") || url.startsWith("mediastream:")) unsupported++
                     continue
                 }
-                if (extensionOf(url) == "mpd") { unsupported++; continue }
                 val tag = o.optString("tag")
                 val kind = kindFromExtension(url) ?: when (tag) {
                     "video" -> DetectedMedia.Kind.VIDEO
