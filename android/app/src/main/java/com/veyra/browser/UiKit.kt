@@ -51,15 +51,15 @@ fun Context.dpf(value: Float): Float = value * resources.displayMetrics.density
 
 /** How deep a neumorphic surface is (offset / blur, in dp), matching the mockup shadows. */
 enum class Depth(val offset: Float, val blur: Float) {
-    CARD(6f, 14f),
-    BUTTON(4f, 10f),
-    FIELD(5f, 10f),
-    WELL(3f, 7f),
-    KNOB(2f, 4f)
+    CARD(2f, 5f),
+    BUTTON(1.5f, 4f),
+    FIELD(2f, 5f),
+    WELL(1f, 3f),
+    KNOB(1f, 2f)
 }
 
 /**
- * Soft two-sided neumorphic surface. The shadows are rendered once per size into a bitmap, so
+ * Subtle two-sided neumorphic surface. Shadows are restrained and rendered once per size into a bitmap, so
  * drawing stays cheap on low-RAM devices. Raised surfaces draw their shadows outside the view
  * bounds; ancestors must therefore keep clipChildren = false and leave a gutter at the edges.
  */
