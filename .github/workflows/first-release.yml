@@ -179,7 +179,7 @@ jobs:
           body: |
             ## Veyra v${{ steps.version.outputs.version }} — Android early preview
 
-            Includes the latest browser viewport and temporary bottom-control visibility fixes, plus reduced neumorphic shadows. These Android APKs are built and signed by GitHub Actions. CI verifies the package ID, versionName, ABI, signature certificate consistency, ZIP alignment, APK size (<150 MB), unit tests, lint, and an x86_64 emulator install/launch smoke test.
+            Includes the latest browser viewport and temporary bottom-control visibility fixes, reduced neumorphic shadows, and a GeckoRuntime singleton fix to prevent a crash when Android recreates the browser activity. These Android APKs are built and signed by GitHub Actions. CI verifies the package ID, versionName, ABI, signature certificate consistency, ZIP alignment, APK size (<150 MB), unit tests, lint, and an x86_64 emulator install/launch smoke test.
 
             ### Downloads
             - ARM64 Android: `veyra-${{ steps.version.outputs.version }}-android-arm64-v8a.apk`
