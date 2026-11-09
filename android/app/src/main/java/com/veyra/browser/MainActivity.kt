@@ -118,25 +118,14 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* Notifications are optional; downloads work without them. */ }
     private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val browserChromeHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val hideBrowserChrome = Runnable { hideBrowserDock() }
+    // The browser dock is intentionally stable and always visible while browsing.
+    // It only yields to the keyboard so it never covers the search field.
     private fun revealBrowserChrome() {
         if (currentPage != "browse" || keyboardVisible) return
-        browserChromeHandler.removeCallbacks(hideBrowserChrome)
-        dockHidden = false
         bottomBar?.let { bar ->
             bar.visibility = View.VISIBLE
-            bar.animate().cancel()
-            bar.animate().translationY(0f).alpha(1f).setDuration(200L).start()
-        }
-    }
-
-    private fun hideBrowserDock() {
-        if (currentPage != "browse" || keyboardVisible) return
-        dockHidden = true
-        bottomBar?.let { bar ->
-            bar.animate().cancel()
-            bar.animate().translationY((bar.height + dp(16)).toFloat()).alpha(0f).setDuration(180L).start()
+            bar.alpha = 1f
+            bar.translationY = 0f
         }
     }
 
@@ -165,22 +154,7 @@ class MainActivity : AppCompatActivity() {
                 .build()
         ).also { sharedRuntime = it }
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
-        geckoView = GeckoView(this).apply {
-            setOnTouchListener { _, event ->
-                when (event.actionMasked) {
-                    android.view.MotionEvent.ACTION_DOWN -> lastTouchY = event.y
-                    android.view.MotionEvent.ACTION_MOVE -> {
-                        val delta = event.y - lastTouchY
-                        if (delta < -dp(8)) hideBrowserDock()
-                        else if (delta > dp(8)) revealBrowserChrome()
-                        lastTouchY = event.y
-                    }
-                    android.view.MotionEvent.ACTION_UP,
-                    android.view.MotionEvent.ACTION_CANCEL -> lastTouchY = 0f
-                }
-                false
-            }
-        }
+        geckoView = GeckoView(this)
         downloads = DownloadCenter(this) {
             if (currentPage == "downloads") refreshDownloads()
         }
@@ -208,19 +182,10 @@ class MainActivity : AppCompatActivity() {
             keyboardVisible = imeInsetBottom > systemInsetBottom
             applyGutters()
             bottomBar?.let { bar ->
-                if (keyboardVisible) {
-                    bar.animate().cancel()
-                    bar.visibility = View.GONE
-                } else {
-                    bar.visibility = View.VISIBLE
-                    if (currentPage == "browse" && dockHidden) {
-                        bar.alpha = 0f
-                        bar.translationY = (bar.height + dp(16)).toFloat()
-                    } else {
-                        bar.alpha = 1f
-                        bar.translationY = 0f
-                    }
-                }
+                bar.animate().cancel()
+                bar.visibility = if (keyboardVisible && currentPage == "browse") View.GONE else View.VISIBLE
+                bar.alpha = 1f
+                bar.translationY = 0f
             }
             insets
         }
@@ -392,7 +357,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetContent(page: String) {
-        browserChromeHandler.removeCallbacks(hideBrowserChrome)
         dockHidden = false
         currentPage = page
         if (::root.isInitialized) applyGutters()
@@ -512,8 +476,16 @@ class MainActivity : AppCompatActivity() {
     private fun addBrowserBar() {
         val bar = row().apply {
             gravity = Gravity.CENTER
-            setPadding(dp(8), 0, dp(8), 0)
-            neu(this, 28, Depth.CARD)
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(8), dp(5), dp(8), dp(5))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = dp(34).toFloat()
+                setColor(Color.argb(245, 12, 25, 42))
+                setStroke(dp(1), Color.argb(90, 53, 213, 245))
+            }
+            elevation = dp(12).toFloat()
+            clipToOutline = true
         }
         fun cell(paths: List<String>, description: String, color: Int, filled: Boolean = false, action: () -> Unit): View =
             LinearLayout(this).apply {
@@ -554,27 +526,22 @@ class MainActivity : AppCompatActivity() {
             setOnLongClickListener { showBrowserMenu(); true }
         }
         listOf(back, forward, share, tabs, menu).forEach { view ->
-            bar.addView(view, lp(0, dp(48), 1f))
+            bar.addView(view, lp(dp(48), dp(48)))
         }
         attachBottomBar(bar)
     }
 
     private fun attachBottomBar(bar: View) {
         bottomBar = bar
-        if (currentPage == "browse") {
-            dockHidden = true
-            bar.alpha = 0f
-            bar.translationY = dp(80).toFloat()
-            bar.setOnTouchListener { _, event ->
-                if (event.action == android.view.MotionEvent.ACTION_DOWN) revealBrowserChrome()
-                false
-            }
-        }
-        root.addView(bar, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)).apply {
+        dockHidden = false
+        bar.alpha = 1f
+        bar.translationY = 0f
+        root.addView(bar, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(58)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
             topMargin = dp(8)
-            bottomMargin = dp(8)
-            leftMargin = 0
-            rightMargin = 0
+            bottomMargin = dp(10)
+            leftMargin = dp(20)
+            rightMargin = dp(20)
         })
     }
 
