@@ -6,6 +6,8 @@
   var MEDIA_EXT = /\.(mp4|m4v|webm|mkv|mov|3gp|ogv|mp3|m4a|aac|ogg|oga|opus|wav|flac|m3u8|mpd)(\?|#|$)/i;
   var lastSent = "";
   var timer = null;
+  var known = Object.create(null);
+  var adMediaSkipped = 0;
 
   function abs(u) {
     try { return new URL(u, document.baseURI).href; } catch (e) { return ""; }
@@ -14,21 +16,40 @@
   function collect() {
     var items = [];
     var blobs = 0;
+    adMediaSkipped = 0;
     function add(u, tag, title) {
       if (!u) return;
       if (u.indexOf("blob:") === 0 || u.indexOf("mediastream:") === 0) { blobs++; return; }
       var a = abs(u);
-      if (a) items.push({ url: a, tag: tag, title: title || "" });
+      if (a && !known[a]) known[a] = { url: a, tag: tag, title: title || "" };
+      else if (a && known[a] && !known[a].title && title) known[a].title = title;
+    }
+    function isAdVideo(el) {
+      if (!/youtube\.com$|youtube-nocookie\.com$/.test(location.hostname)) return false;
+      return !!el.closest(".html5-video-player.ad-showing, .ytp-ad-player-overlay, .video-ads");
     }
     var title = (document.title || "").slice(0, 120);
     var els = document.querySelectorAll("video, audio");
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
+      if (isAdVideo(el)) { adMediaSkipped++; continue; }
       var tag = el.tagName.toLowerCase();
       add(el.currentSrc || el.getAttribute("src"), tag, title);
       var sources = el.querySelectorAll("source[src]");
       for (var j = 0; j < sources.length; j++) add(sources[j].getAttribute("src"), tag, title);
+      ["data-src", "data-video-src", "data-url"].forEach(function (attr) {
+        add(el.getAttribute(attr), tag, title);
+      });
     }
+    try {
+      var resources = performance.getEntriesByType("resource");
+      for (var ri = Math.max(0, resources.length - 250); ri < resources.length; ri++) {
+        var ru = resources[ri].name || "";
+        if (/\.(mp4|m4v|webm|mkv|mov|3gp|ogv|mp3|m4a|aac|ogg|oga|opus|wav|flac|m3u8|mpd)(\?|#|$)/i.test(ru)) {
+          add(ru, /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac)(\?|#|$)/i.test(ru) ? "audio" : "video", title);
+        }
+      }
+    } catch (e) { /* timing entries are optional */ }
     var metas = document.querySelectorAll(
       'meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"], meta[property="og:audio"]');
     for (var k = 0; k < metas.length; k++) add(metas[k].getAttribute("content"), "meta", title);
@@ -37,7 +58,8 @@
       var h = links[m].getAttribute("href");
       if (h && MEDIA_EXT.test(h)) add(h, "link", (links[m].textContent || "").trim().slice(0, 80) || title);
     }
-    return { page: location.href, items: items.slice(0, 40), blobs: blobs };
+    var all = Object.keys(known).map(function (key) { return known[key]; });
+    return { page: location.href, items: all.slice(-60), blobs: blobs, adMediaSkipped: adMediaSkipped };
   }
 
   function report() {
@@ -57,6 +79,8 @@
   schedule();
   document.addEventListener("play", schedule, true);
   document.addEventListener("loadedmetadata", schedule, true);
+  document.addEventListener("playing", schedule, true);
+  document.addEventListener("timeupdate", schedule, true);
   try {
     new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
   } catch (e) { /* ignore */ }
