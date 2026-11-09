@@ -134,9 +134,15 @@ class VpnManager private constructor(context: Context) {
 
     /** Re-reads the real tunnel state (the service can outlive the Activity). */
     fun refresh() {
-        val engine = backend ?: return
         if (status == Status.CONNECTING) return
-        status = if (engine.runningTunnelNames.contains(TUNNEL_NAME)) Status.ON else Status.OFF
+        try {
+            val engine = backend
+            status = if (engine != null && engine.runningTunnelNames.contains(TUNNEL_NAME)) Status.ON else Status.OFF
+        } catch (e: Throwable) {
+            status = Status.ERROR
+            lastError = "Could not read VPN status: " + (e.message ?: e.javaClass.simpleName)
+        }
+        notifyChanged()
     }
 
     private fun fail(message: String) {
