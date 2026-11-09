@@ -1808,4 +1808,8 @@ class MainActivity : AppCompatActivity() {
         bookmarks.forEach { saved.put(it) }
         prefs.edit().putString("bookmarks", saved.toString()).apply()
     }
+
+    companion object {
+        @Volatile private var sharedRuntime: GeckoRuntime? = null
+    }
 }
