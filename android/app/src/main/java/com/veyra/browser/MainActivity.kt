@@ -57,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     private var strictProtection = false
     private var cookieMode = "trackers"
     private var javascriptEnabled = true
+    private var blockPopups = true
     private lateinit var geckoView: GeckoView
     private lateinit var root: LinearLayout
     private lateinit var contentArea: LinearLayout
@@ -148,6 +149,7 @@ class MainActivity : AppCompatActivity() {
         strictProtection = prefs.getBoolean("protection_strict", false)
         cookieMode = prefs.getString("cookie_mode", "trackers") ?: "trackers"
         javascriptEnabled = prefs.getBoolean("javascript_enabled", true)
+        blockPopups = prefs.getBoolean("block_popups", true)
         applyTheme()
 
         val contentBlockingSettings = ContentBlocking.Settings.Builder()
@@ -844,8 +846,43 @@ class MainActivity : AppCompatActivity() {
             }
         }
         page.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply {
-            topMargin = dp(20); bottomMargin = dp(28)
+            topMargin = dp(20); bottomMargin = dp(12)
         })
+
+        // Suggestions are derived only from on-device history and bookmarks.
+        val suggestions = column()
+        page.addView(suggestions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(18)
+        })
+        fun refreshSuggestions(raw: String) {
+            suggestions.removeAllViews()
+            val query = raw.trim().lowercase()
+            val candidates = (history.asReversed().map { Triple(it.title.ifBlank { hostOf(it.url) }, hostOf(it.url), it.url) } +
+                bookmarks.map { Triple(hostOf(it), hostOf(it), it) })
+                .distinctBy { it.third }
+                .filter { query.isBlank() || it.first.lowercase().contains(query) || it.second.lowercase().contains(query) || it.third.lowercase().contains(query) }
+                .take(5)
+            if (candidates.isEmpty()) return
+            suggestions.addView(label(if (query.isBlank()) "RECENT PAGES" else "SUGGESTIONS", 10f, Palette.MUTED, 1).apply {
+                letterSpacing = 0.12f
+                setPadding(dp(4), dp(4), 0, dp(8))
+            }, matchWrap())
+            candidates.forEach { item ->
+                suggestions.addView(
+                    listRow(well(icon(Icons.CLOCK, Palette.ACCENT, 18)), item.first, item.second) {
+                        navigate(item.third)
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
+                )
+            }
+        }
+        refreshSuggestions(prefill)
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refreshSuggestions(s?.toString().orEmpty()) }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+
         page.addView(label("QUICK SEARCH", 11f, Palette.MUTED, 1).apply {
             letterSpacing = 0.12f
             setPadding(dp(4), 0, 0, dp(14))
@@ -941,6 +978,24 @@ class MainActivity : AppCompatActivity() {
                         (fill.parent as? View)?.visibility = View.VISIBLE
                     }
                 }
+            }
+
+            override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
+                if (blockPopups) {
+                    runOnUiThread {
+                        if (tab === cur && currentPage == "browse") {
+                            Toast.makeText(this@MainActivity, "Blocked a pop-up window", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    return null
+                }
+                val popupTab = newTab(tab.isPrivate) ?: return null
+                runOnUiThread {
+                    cur = popupTab
+                    if (uri.isNotBlank()) popupTab.session.loadUri(uri)
+                    show("browse")
+                }
+                return GeckoResult.fromValue(popupTab.session)
             }
 
             override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) { tab.canGoBack = canGoBack }
@@ -1669,6 +1724,11 @@ class MainActivity : AppCompatActivity() {
 
         switchRow(Icons.SHIELD, "Tracking protection", "Blocks known trackers. Not a full ad blocker.", trackingProtectionEnabled) {
             setTrackingProtection(it)
+        }
+        switchRow(Icons.SHIELD, "Block pop-up windows", "Block websites opening unsolicited new windows or tabs.", blockPopups) {
+            blockPopups = it
+            prefs.edit().putBoolean("block_popups", it).apply()
+            Toast.makeText(this, if (it) "Pop-up blocking enabled" else "Pop-up blocking disabled", Toast.LENGTH_SHORT).show()
         }
         val secure = deviceIsSecure()
         switchRow(
