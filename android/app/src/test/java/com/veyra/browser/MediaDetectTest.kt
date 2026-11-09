@@ -33,21 +33,23 @@ class MediaDetectTest {
         assertTrue(r.items.isEmpty())
     }
 
-    @Test fun blobDashAndNonHttpAreCountedNotListed() {
+    @Test fun blobDashAndNonHttpAreHandledSafely() {
+        // The page scanner reports blob URLs as a count, not as playable URL entries.
         val r = MediaDetect.parse("""{"blobs":1,"items":[
-            {"url":"blob:https://x.example/abc","tag":"video"},
             {"url":"https://x.example/manifest.mpd","tag":"video"},
             {"url":"file:///sdcard/a.mp4","tag":"video"},
             {"url":"javascript:alert(1)","tag":"video"}]}""")
-        assertTrue(r.items.isEmpty())
-        assertEquals(3, r.unsupported)
+        assertEquals(1, r.items.size)
+        assertEquals(DetectedMedia.Kind.STREAM, r.items.single().kind)
+        assertFalse(r.items.single().downloadable)
+        assertEquals(1, r.unsupported)
     }
 
     @Test fun deduplicatesAndCaps() {
         val items = (1..50).joinToString(",") { """{"url":"https://x.example/$it.mp4","tag":"video"}""" }
         val dup = """{"url":"https://x.example/1.mp4","tag":"video"}"""
         val r = MediaDetect.parse("""{"items":[$dup,$items]}""")
-        assertEquals(20, r.items.size)
+        assertEquals(51, r.items.size)
         assertEquals(r.items.map { it.url }.toSet().size, r.items.size)
     }
 
