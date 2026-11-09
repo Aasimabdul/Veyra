@@ -100,6 +100,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val privateTabAuth = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            if (newTab(true) != null) showSearch("")
+        } else {
+            Toast.makeText(this, "Private tab cancelled", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun requestPrivateTab() {
+        val keyguard = getSystemService(KeyguardManager::class.java)
+        val credentialIntent = keyguard?.createConfirmDeviceCredentialIntent(
+            "Unlock private browsing", "Verify your screen lock to open a private tab"
+        )
+        if (credentialIntent == null) {
+            Toast.makeText(this, "Set a PIN, pattern or password in Android Settings to protect private tabs.", Toast.LENGTH_LONG).show()
+            try { startActivity(Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)) } catch (_: Exception) { }
+            return
+        }
+        privateTabAuth.launch(credentialIntent)
+    }
+
     private lateinit var downloads: DownloadCenter
     private var vaultUnlocked = false
     private var pendingExportId: String? = null
@@ -1137,7 +1160,8 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             contentDescription = if (tabsShowPrivate) "New private tab" else "New tab"
             setOnClickListener {
-                if (newTab(tabsShowPrivate) != null) showSearch("")
+                if (tabsShowPrivate) requestPrivateTab()
+                else if (newTab(false) != null) showSearch("")
             }
             neu(this, 28, Depth.BUTTON, pressable = true)
             addView(icon(Icons.PLUS, Palette.ACCENT, 24))
