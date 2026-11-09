@@ -968,7 +968,13 @@ class MainActivity : AppCompatActivity() {
         if (trimmed.startsWith("magnet:", true) ||
             (trimmed.startsWith("http", true) && trimmed.substringBefore('#').substringBefore('?').endsWith(".torrent", true))) {
             try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(trimmed)))
+                val torrentUri = Uri.parse(trimmed)
+                val torrentIntent = if (trimmed.startsWith("magnet:", true)) {
+                    Intent(Intent.ACTION_VIEW, torrentUri)
+                } else {
+                    Intent(Intent.ACTION_VIEW).setDataAndType(torrentUri, "application/x-bittorrent")
+                }
+                startActivity(torrentIntent)
             } catch (_: Exception) {
                 Toast.makeText(this, "Install a torrent client such as Flud to open this link", Toast.LENGTH_LONG).show()
             }
