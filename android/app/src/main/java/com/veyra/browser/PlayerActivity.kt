@@ -25,6 +25,7 @@ import androidx.media3.ui.PlayerView
  * Built-in player for local files and direct media URLs the user opened. No DRM and no
  * background playback: playback stops when the screen is left (except picture-in-picture).
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private lateinit var playerView: PlayerView
