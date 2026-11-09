@@ -10,4 +10,7 @@ class Tab(val id: Int, val isPrivate: Boolean, val session: GeckoSession) {
     var canGoForward: Boolean = false
     var desktop: Boolean = false
     var blocked: Int = 0
+    /** Media files the page scanner found on the current page (reset on navigation). */
+    var media: List<DetectedMedia> = emptyList()
+    var unsupportedMedia: Int = 0
 }

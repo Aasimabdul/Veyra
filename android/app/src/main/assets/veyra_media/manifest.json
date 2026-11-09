@@ -1,0 +1,16 @@
+{
+  "manifest_version": 2,
+  "name": "Veyra media detector",
+  "version": "1.0",
+  "description": "Finds video and audio files on the current page so Veyra can play or save them. Runs only inside Veyra and sends results to the app, never to a server.",
+  "browser_specific_settings": { "gecko": { "id": "media@veyra.app" } },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons"]
+}

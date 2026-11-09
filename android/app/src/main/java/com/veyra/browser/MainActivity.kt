@@ -28,11 +28,13 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 import org.mozilla.geckoview.ContentBlocking
+import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.StorageController
+import org.mozilla.geckoview.WebExtension
 import java.text.DateFormat
 import java.util.Date
 
@@ -114,6 +116,13 @@ class MainActivity : AppCompatActivity() {
     private val mediaPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) playMedia(uri, null)
     }
+    private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) VpnManager.get(this).connect()
+        else Toast.makeText(this, "VPN permission was not granted", Toast.LENGTH_LONG).show()
+    }
+    private val vpnImport = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importVpnConfig(uri)
+    }
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* Notifications are optional; downloads work without them. */ }
@@ -154,6 +163,7 @@ class MainActivity : AppCompatActivity() {
                 .build()
         ).also { sharedRuntime = it }
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
+        installMediaScanner()
         geckoView = GeckoView(this)
         downloads = DownloadCenter(this) {
             if (currentPage == "downloads") refreshDownloads()
@@ -244,7 +254,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        browserChromeHandler.removeCallbacks(hideBrowserChrome)
+        VpnManager.get(this).listener = null
         tabs.forEach { it.session.close() }
         tabs.clear()
         super.onDestroy()
@@ -350,6 +360,7 @@ class MainActivity : AppCompatActivity() {
             "settings" -> showSettings()
             "appearance" -> showAppearance()
             "private" -> showPrivateSpace()
+            "vpn" -> showVpn()
             "privacy" -> showPrivacy()
             "lock" -> showLock()
             else -> showHome()
@@ -842,6 +853,8 @@ class MainActivity : AppCompatActivity() {
                 tab.url = url
                 tab.title = ""
                 tab.blocked = 0
+                tab.media = emptyList()
+                tab.unsupportedMedia = 0
                 if (!tab.isPrivate && history.lastOrNull()?.url != url) {
                     history.add(HistoryEntry(url, "", System.currentTimeMillis()))
                     persistHistory()
@@ -905,6 +918,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         session.open(runtime)
+        attachMediaScanner(tab)
         tabs.add(tab)
         cur = tab
         applySecureFlag()
@@ -1587,10 +1601,243 @@ class MainActivity : AppCompatActivity() {
         actionRow(Icons.SHIELD, "Privacy", "Blocked trackers, cookies, JavaScript") { show("privacy") }
         actionRow(Icons.SETTINGS, "Appearance", "Theme: ${if (themeKey == Themes.SYSTEM) "System" else Themes.byKey(themeKey).name}") { show("appearance") }
         actionRow(Icons.LOCK, "Private Space", "Encrypted notes and files") { show("private") }
+        actionRow(Icons.SHIELD, "VPN", vpnSubtitle()) { show("vpn") }
         actionRow(Icons.CLOCK, "History", "Pages visited in normal tabs") { show("history") }
         actionRow(Icons.TRASH, "Clear browsing data", "Cookies, cache, site data and history") { confirmClearData() }
         actionRow(Icons.INFO, "About Veyra", "Version, engine and licence") { showAbout() }
         addMainNav("settings")
+    }
+
+    // ---- VPN ---------------------------------------------------------------------------
+
+    private fun vpnSubtitle(): String {
+        val vpn = VpnManager.get(this)
+        return when {
+            vpn.status == VpnManager.Status.ON -> "Connected"
+            vpn.hasConfig() -> "WireGuard config saved, off"
+            else -> "Import your own WireGuard config"
+        }
+    }
+
+    private fun startVpn() {
+        val vpn = VpnManager.get(this)
+        val intent = try { vpn.permissionIntent() } catch (_: Exception) { null }
+        if (intent != null) vpnPermission.launch(intent) else vpn.connect()
+    }
+
+    private fun importVpnConfig(uri: Uri) {
+        val text = try {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                val buffer = CharArray(20_001)
+                val read = reader.read(buffer)
+                if (read > 0) String(buffer, 0, read) else ""
+            } ?: ""
+        } catch (_: Exception) {
+            Toast.makeText(this, "Could not read that file", Toast.LENGTH_LONG).show()
+            return
+        }
+        saveVpnConfig(text)
+    }
+
+    private fun saveVpnConfig(text: String) {
+        try {
+            VpnManager.get(this).saveConfig(text)
+            Toast.makeText(this, "VPN config saved (encrypted)", Toast.LENGTH_SHORT).show()
+        } catch (e: IllegalArgumentException) {
+            Toast.makeText(this, e.message ?: "Invalid config", Toast.LENGTH_LONG).show()
+        }
+        if (currentPage == "vpn") showVpn()
+    }
+
+    private fun showVpn() {
+        resetContent("vpn")
+        val vpn = VpnManager.get(this)
+        vpn.refresh()
+        vpn.listener = { if (currentPage == "vpn") showVpn() }
+        val page = scrollPage()
+        val header = row().apply { minimumHeight = dp(48) }
+        header.addView(iconButton(Icons.BACK, "Back") { show("settings") })
+        header.addView(label("VPN", 22f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
+        page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(22) })
+
+        val status = vpn.status
+        val card = column().apply {
+            setPadding(dp(22), dp(20), dp(22), dp(20))
+            neu(this, 26, Depth.CARD)
+        }
+        card.addView(label("Status", 13f, Palette.MUTED))
+        card.addView(label(
+            when (status) {
+                VpnManager.Status.ON -> "Connected"
+                VpnManager.Status.CONNECTING -> "Connecting…"
+                VpnManager.Status.ERROR -> "Connection failed"
+                VpnManager.Status.OFF -> if (vpn.hasConfig()) "Off" else "No config yet"
+            },
+            26f, if (status == VpnManager.Status.ON) Palette.ACCENT else Palette.TEXT, 1
+        ).apply { setPadding(0, dp(8), 0, dp(6)) })
+        card.addView(label(
+            when {
+                status == VpnManager.Status.ON -> "All apps on this device use the tunnel while it is on."
+                status == VpnManager.Status.ERROR -> vpn.lastError ?: "Something went wrong."
+                vpn.hasConfig() -> "Tap Connect to start the tunnel."
+                else -> "Veyra does not provide VPN servers. Import a WireGuard .conf from your VPN provider or your own server."
+            },
+            13f, Palette.MUTED
+        ).apply { setLineSpacing(0f, 1.2f) })
+        page.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
+
+        if (vpn.hasConfig()) {
+            val busy = status == VpnManager.Status.CONNECTING
+            val on = status == VpnManager.Status.ON
+            page.addView(
+                textButton(if (on) "Disconnect" else if (busy) "Connecting…" else "Connect", primary = !on) {
+                    if (busy) return@textButton
+                    if (on) vpn.disconnect() else startVpn()
+                },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
+            )
+            val summary = vpn.summary()
+            if (summary != null) {
+                val info = column().apply {
+                    setPadding(dp(22), dp(18), dp(22), dp(18))
+                    neu(this, 26, Depth.CARD)
+                }
+                fun line(name: String, value: String) {
+                    info.addView(label(name, 12f, Palette.MUTED).apply { setPadding(0, dp(6), 0, 0) })
+                    info.addView(label(value.ifBlank { "-" }, 14f, Palette.TEXT).apply { setPadding(0, dp(2), 0, 0) })
+                }
+                line("Server", summary.endpoints.joinToString("\n"))
+                line("Device address", summary.addresses.joinToString(", "))
+                line("DNS", summary.dns.joinToString(", "))
+                line("Routes", if (summary.routesAllTraffic) "All traffic" else summary.allowedIps.joinToString(", "))
+                info.addView(label("The private key is stored encrypted and is never shown.", 12f, Palette.MUTED)
+                    .apply { setPadding(0, dp(14), 0, 0) })
+                page.addView(info, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
+            }
+        }
+
+        val actions = row()
+        actions.addView(textButton(if (vpn.hasConfig()) "Replace file" else "Import file", primary = !vpn.hasConfig()) {
+            vpnImport.launch(arrayOf("*/*"))
+        }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        actions.addView(textButton("Paste") {
+            val clip = getSystemService(android.content.ClipboardManager::class.java)
+                ?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+            if (clip.isBlank()) Toast.makeText(this, "Copy your WireGuard config first", Toast.LENGTH_SHORT).show()
+            else saveVpnConfig(clip)
+        }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(14) })
+        page.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
+        if (vpn.hasConfig()) {
+            page.addView(textButton("Remove config") {
+                showConfirmSheet("Remove VPN config?", "The saved WireGuard config is deleted from this device.", "Remove") {
+                    vpn.deleteConfig()
+                    show("vpn")
+                }
+            }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
+        }
+        page.addView(label(
+            "Uses the WireGuard engine. Your provider sees the traffic that leaves the tunnel, so pick one you trust. " +
+                "Not implemented: server list, kill switch and per-app split tunnelling.",
+            12f, Palette.MUTED
+        ).apply { setLineSpacing(0f, 1.2f); setPadding(dp(4), 0, dp(4), 0) }, matchWrap())
+        addMainNav("settings")
+    }
+
+    // ---- page media (detect, play, save) ------------------------------------------------
+
+    /**
+     * Loads the built-in scanner extension once per process. It reads the page DOM for video and
+     * audio URLs and reports them to [attachMediaScanner]'s delegate. If it fails to load,
+     * everything else keeps working and the menu simply never offers page media.
+     */
+    private fun installMediaScanner() {
+        if (mediaExtension != null) return
+        try {
+            val controller = runtime.webExtensionController
+            controller.ensureBuiltIn("resource://android/assets/veyra_media/", "media@veyra.app").accept({ ext ->
+                if (ext != null) {
+                    mediaExtension = ext
+                    controller.setAllowedInPrivateBrowsing(ext, true)
+                    tabs.forEach { attachMediaScanner(it) }
+                }
+                null
+            }, { _ -> null })
+        } catch (_: Throwable) {
+            // Media detection is optional.
+        }
+    }
+
+    private fun attachMediaScanner(tab: Tab) {
+        val ext = mediaExtension ?: return
+        tab.session.webExtensionController.setMessageDelegate(ext, object : WebExtension.MessageDelegate {
+            override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
+                val result = MediaDetect.parse(message.toString())
+                runOnUiThread {
+                    tab.media = result.items
+                    tab.unsupportedMedia = result.unsupported
+                }
+                return null
+            }
+        }, "veyraMedia")
+    }
+
+    private fun showMediaSheet() {
+        val tab = cur ?: return
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Media on this page", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "Direct files can be played or saved. Streams can only be played.",
+                13f, Palette.MUTED
+            ).apply { setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
+            val list = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
+            tab.media.forEach { media ->
+                val card = column().apply {
+                    setPadding(dp(16), dp(14), dp(16), dp(14))
+                    neu(this, 20, Depth.BUTTON)
+                }
+                card.addView(label(media.title.ifBlank { media.fileName }, 14f, Palette.TEXT, 1).apply {
+                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                val kind = when (media.kind) {
+                    DetectedMedia.Kind.VIDEO -> "Video"
+                    DetectedMedia.Kind.AUDIO -> "Audio"
+                    DetectedMedia.Kind.STREAM -> "Stream"
+                }
+                card.addView(label("$kind · ${hostOf(media.url)} · ${media.fileName}", 12f, Palette.MUTED).apply {
+                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, dp(4), 0, dp(10))
+                })
+                val actions = row()
+                actions.addView(textButton("Play", primary = true) {
+                    dialog.dismiss(); playMedia(Uri.parse(media.url), media.title)
+                }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                if (media.downloadable) {
+                    actions.addView(textButton("Save") {
+                        dialog.dismiss()
+                        downloads.enqueueUrl(media.url, tab.isPrivate)
+                        Toast.makeText(this, "Download started", Toast.LENGTH_SHORT).show()
+                    }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
+                }
+                card.addView(actions, matchWrap())
+                list.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
+            }
+            val scroller = ScrollView(this).apply {
+                clipChildren = false; clipToPadding = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(list)
+            }
+            sheet.addView(scroller, lp(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                if (tab.media.size > 2) dp(340) else ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+            if (tab.unsupportedMedia > 0) {
+                sheet.addView(label(
+                    "${tab.unsupportedMedia} protected or segmented stream(s) on this page cannot be saved by Veyra " +
+                        "(for example blob, DRM or DASH video).",
+                    12f, Palette.MUTED
+                ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(10), 0, 0) }, matchWrap())
+            }
+        }
     }
 
     // ---- actions ----------------------------------------------------------------------
@@ -1661,8 +1908,15 @@ class MainActivity : AppCompatActivity() {
             if (DownloadNaming.looksPlayable(currentUrl)) {
                 item(Icons.PLAY, "Play in Veyra") { playMedia(Uri.parse(currentUrl), null) }
             }
+            cur?.let { tab ->
+                if (tab.media.isNotEmpty() || tab.unsupportedMedia > 0) {
+                    val count = tab.media.size
+                    item(Icons.PLAY, if (count > 0) "Media on this page ($count)" else "Media on this page") { showMediaSheet() }
+                }
+            }
             item(Icons.BOOKMARK, "Bookmarks") { show("bookmarks") }
             item(Icons.DOWNLOAD, "Downloads") { show("downloads") }
+            item(Icons.SHIELD, "VPN") { show("vpn") }
             item(Icons.SEARCH, "Find in page") { showFindSheet() }
             item(Icons.TABS, if (cur?.desktop == true) "Mobile site" else "Desktop site") { toggleDesktop() }
             if (DownloadNaming.looksLikeDirectFile(currentUrl)) {
@@ -1869,5 +2123,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         @Volatile private var sharedRuntime: GeckoRuntime? = null
+        @Volatile private var mediaExtension: WebExtension? = null
     }
 }
