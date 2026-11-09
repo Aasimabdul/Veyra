@@ -253,6 +253,18 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
     private fun publish(item: DownloadItem): Uri? {
         val source = partFile(item)
         val mime = item.mime ?: "application/octet-stream"
+
+        // Private downloads must never be published to the shared MediaStore Downloads collection.
+        // Keep them under app-specific storage so other apps and gallery/downloads scanners cannot
+        // discover them. This is app-sandbox privacy, not encrypted vault storage.
+        if (item.isPrivate) {
+            val dir = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "VeyraPrivate")
+                .apply { mkdirs() }
+            val target = File(dir, item.name)
+            source.copyTo(target, overwrite = true)
+            return FileProvider.getUriForFile(context, "${context.packageName}.files", target)
+        }
+
         if (Build.VERSION.SDK_INT >= 29) {
             val resolver = context.contentResolver
             val values = ContentValues().apply {
@@ -281,7 +293,9 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             context.contentResolver.delete(uri, null, null)
         } else {
             val path = uri.lastPathSegment ?: return
-            File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra/${path.substringAfterLast('/')}").delete()
+            val name = path.substringAfterLast('/')
+            File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra/$name").delete()
+            File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "VeyraPrivate/$name").delete()
         }
     }
 
