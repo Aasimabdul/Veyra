@@ -688,8 +688,9 @@ class MainActivity : AppCompatActivity() {
         }
         val pill = row().apply {
             setPadding(dp(18), 0, dp(6), 0)
-            contentDescription = "Edit address"
+            contentDescription = "Edit address; long press to show browser controls"
             setOnClickListener { showSearch(currentUrl) }
+            setOnLongClickListener { revealBrowserChrome(); true }
             neu(this, 26, Depth.FIELD, inset = true)
         }
         pill.addView(icon(Icons.LOCK, Palette.ACCENT, 16))
@@ -737,7 +738,7 @@ class MainActivity : AppCompatActivity() {
         }
         contentArea.addView(geckoView, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         addBrowserBar()
-        bottomBar?.visibility = View.GONE
+        revealBrowserChrome()
     }
 
     private fun trackerShield(): View {
