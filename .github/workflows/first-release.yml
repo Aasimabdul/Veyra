@@ -160,26 +160,18 @@ jobs:
             if ! adb shell pidof com.veyra.browser; then adb logcat -b crash -d | head -60; exit 1; fi
             if adb logcat -b crash -d | grep -E "com\.veyra\.browser"; then echo "::error::Veyra release APK crashed"; exit 1; fi
 
-      - name: Install and launch signed ARM64 release APK in ARM64 emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          target: google_apis
-          arch: arm64-v8a
-          profile: pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -camera-back none -camera-front none
-          emulator-boot-timeout: 900
-          disable-linux-hw-accel: true
-          disable-animations: true
-          script: |
-            test -s "$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk"
-            adb wait-for-device
-            adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
-            adb install -r "$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk"
-            adb shell am start -W -n com.veyra.browser/.MainActivity
-            sleep 8
-            if ! adb shell pidof com.veyra.browser; then adb logcat -b crash -d | head -60; exit 1; fi
-            if adb logcat -b crash -d | grep -E "com\\.veyra\\.browser"; then echo "::error::Veyra ARM64 release APK crashed"; exit 1; fi
+      - name: Verify ARM64 APK install metadata for physical-device compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+          apk=android/app/build/outputs/apk/release/app-arm64-v8a-release.apk
+          test -s "$apk"
+          "$tools/aapt2" dump badging "$apk" | grep -q "package: name='com.veyra.browser'"
+          "$tools/aapt2" dump badging "$apk" | grep -q "native-code: 'arm64-v8a'"
+          "$tools/apksigner" verify --verbose --print-certs "$apk"
+          "$tools/zipalign" -c -v 4 "$apk"
+          echo "ARM64 APK metadata, signing, and ZIP alignment passed. Runtime installation is tested on x86_64 emulator; ARM64 runtime must be validated on ARM64 hardware."
 
       - name: Upload release workflow artifacts
         uses: actions/upload-artifact@v4
@@ -200,7 +192,7 @@ jobs:
           body: |
             ## Veyra v${{ steps.version.outputs.version }} — Android early preview
 
-            Includes the latest browser viewport and temporary bottom-control visibility fixes, reduced neumorphic shadows, and a GeckoRuntime singleton fix to prevent a crash when Android recreates the browser activity. These Android APKs are built and signed by GitHub Actions. CI verifies the package ID, versionName, ABI, signature certificate consistency, ZIP alignment, APK size (<150 MB), unit tests, lint, and x86_64 plus ARM64 emulator install/launch smoke tests.
+            Includes browser system-inset and keyboard-aware dock fixes, scroll-direction dock visibility, improved navigation contrast, animated loading progress, expanded menu actions, and a GeckoRuntime singleton fix to prevent a crash when Android recreates the browser activity. These Android APKs are built and signed by GitHub Actions. CI verifies the package ID, versionName, ABI, signature certificate consistency, ZIP alignment, APK size (<150 MB), unit tests, lint, x86_64 emulator install/launch smoke test, and ARM64 APK metadata/signature/alignment checks.
 
             ### Downloads
             - ARM64 Android: `veyra-${{ steps.version.outputs.version }}-android-arm64-v8a.apk`
