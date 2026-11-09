@@ -559,6 +559,41 @@ class MainActivity : AppCompatActivity() {
             ))
         }
         pill.addView(shield, lp(dp(40), dp(40)))
+
+        // One-tap device VPN badge beside the address/search field.
+        val vpnManager = VpnManager.get(this)
+        val vpnButton = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            contentDescription = if (vpnManager.status == VpnManager.Status.ON) "VPN connected. Tap to disconnect"
+                else "VPN off. Tap to connect or configure"
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(4), 0, dp(4), 0)
+            setOnClickListener {
+                when (vpnManager.status) {
+                    VpnManager.Status.ON -> vpnManager.disconnect()
+                    VpnManager.Status.CONNECTING -> Toast.makeText(this@MainActivity, "VPN is connecting…", Toast.LENGTH_SHORT).show()
+                    else -> if (vpnManager.hasConfig()) startVpn() else show("vpn")
+                }
+                postDelayed({
+                    if (currentPage == "browse") showBrowser()
+                }, 250)
+            }
+            val connected = vpnManager.status == VpnManager.Status.ON
+            val badge = label(if (connected) "VPN ON" else "VPN", 10f,
+                if (connected) Palette.BG else Palette.ACCENT, 1).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(7), dp(7), dp(7), dp(7))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dpf(12f)
+                    setColor(if (connected) Palette.ACCENT else ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.14f))
+                    setStroke(dp(1), ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.52f))
+                }
+            }
+            addView(badge)
+        }
+        pill.addView(vpnButton, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
+
         val reload = LinearLayout(this).apply {
             gravity = Gravity.CENTER
             contentDescription = "Reload page"
@@ -1728,6 +1763,17 @@ class MainActivity : AppCompatActivity() {
             13f, Palette.MUTED
         ).apply { setLineSpacing(0f, 1.2f) })
         page.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
+
+        val countryNote = column().apply {
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            neu(this, 22, Depth.CARD)
+            addView(label("Server locations", 15f, Palette.TEXT, 1))
+            addView(label(
+                "Veyra can connect only to a real provider/owner-supplied WireGuard server profile. To offer selectable USA, New Zealand and a third country, each location needs a working endpoint and permission to use it; Veyra does not currently operate free VPN servers.",
+                13f, Palette.MUTED
+            ).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) })
+        }
+        page.addView(countryNote, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
 
         if (vpn.hasConfig()) {
             val busy = status == VpnManager.Status.CONNECTING
