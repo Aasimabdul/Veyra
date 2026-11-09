@@ -448,7 +448,7 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER
                 contentDescription = description
                 isClickable = true
-                setOnClickListener { action() }
+                setOnClickListener { revealBrowserChrome(); action() }
                 addView(icon(paths, color, 22, filled))
             }
         val back = cell(Icons.BACK, "Back", Palette.MUTED) {
@@ -471,7 +471,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             contentDescription = "Tabs, ${tabs.size} open"
             isClickable = true
-            setOnClickListener { show("tabs") }
+            setOnClickListener { revealBrowserChrome(); show("tabs") }
             addView(label(tabs.size.toString(), 12f, Palette.ACCENT, 1).apply {
                 gravity = Gravity.CENTER
                 neu(this, 8, Depth.KNOB, inset = true)
