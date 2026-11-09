@@ -51,7 +51,7 @@ class DownloadItem(
 class DownloadCenter(private val context: Context, private val onChange: () -> Unit) {
     val items = ArrayList<DownloadItem>()
     private val ids = AtomicLong(System.currentTimeMillis())
-    private val pool = Executors.newFixedThreadPool(2)
+    private val pool = Executors.newFixedThreadPool(3)
     private val main = Handler(Looper.getMainLooper())
     private val partDir = File(context.cacheDir, "downloads").apply { mkdirs() }
     private val prefs = context.getSharedPreferences("veyra_downloads", Context.MODE_PRIVATE)
@@ -161,6 +161,8 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
                 readTimeout = 20000
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "Veyra")
+                setRequestProperty("Accept-Encoding", "identity")
+                setRequestProperty("Connection", "keep-alive")
                 if (offset > 0) setRequestProperty("Range", "bytes=$offset-")
             }
             val status = connection.responseCode
@@ -198,7 +200,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         RandomAccessFile(file, "rw").use { out ->
             out.seek(offset)
             item.done = offset
-            val buffer = ByteArray(32 * 1024)
+            val buffer = ByteArray(128 * 1024)
             var windowStart = System.currentTimeMillis()
             var windowBytes = 0L
             while (true) {
