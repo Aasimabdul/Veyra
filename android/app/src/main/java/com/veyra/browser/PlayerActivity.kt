@@ -19,12 +19,14 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.TrackSelectionDialogBuilder
 
 /**
  * Clean, MX-style built-in player for local files and direct media URLs.
@@ -121,6 +123,19 @@ class PlayerActivity : AppCompatActivity() {
         val divider = View(this).apply { setBackgroundColor(0x557F91AA) }
         quickControls.addView(divider, LinearLayout.LayoutParams(dp(1), dp(22)))
         quickControls.addView(fitButton, LinearLayout.LayoutParams(dp(64), dp(40)))
+        val audioButton = control("AUDIO", "Choose audio track or language") {
+            val activePlayer = player
+            if (activePlayer == null) {
+                showError("Audio tracks are available after playback starts.")
+            } else {
+                TrackSelectionDialogBuilder(this, "Audio tracks", activePlayer, C.TRACK_TYPE_AUDIO)
+                    .build()
+                    .show()
+            }
+        }
+        quickControls.addView(View(this).apply { setBackgroundColor(0x557F91AA) },
+            LinearLayout.LayoutParams(dp(1), dp(22)))
+        quickControls.addView(audioButton, LinearLayout.LayoutParams(dp(70), dp(40)))
         root.addView(quickControls, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
             topMargin = dp(70)
             rightMargin = dp(14)
