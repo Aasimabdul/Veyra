@@ -157,8 +157,8 @@ jobs:
             adb install -r "$GITHUB_WORKSPACE/android/app/build/outputs/apk/release/app-x86_64-release.apk"
             adb shell am start -W -n com.veyra.browser/.MainActivity
             sleep 8
-            adb shell pidof com.veyra.browser
-            if adb logcat -d -t 5000 | grep -E "FATAL EXCEPTION|Fatal signal"; then echo "::error::Veyra release APK crashed"; exit 1; fi
+            if ! adb shell pidof com.veyra.browser; then adb logcat -b crash -d | head -60; exit 1; fi
+            if adb logcat -b crash -d | grep -E "com\.veyra\.browser"; then echo "::error::Veyra release APK crashed"; exit 1; fi
 
       - name: Upload release workflow artifacts
         uses: actions/upload-artifact@v4
@@ -186,9 +186,15 @@ jobs:
             - 32-bit ARM Android: `veyra-${{ steps.version.outputs.version }}-android-armeabi-v7a.apk`
             - `SHA256SUMS.txt` provides integrity hashes.
 
+            ### What is in this preview
+            Neumorphic UI on 12 themes, multiple and private tabs, tracker protection (standard/strict) with a measured blocked counter, cookie and JavaScript controls, find in page, desktop-site mode, bookmarks and history, a download manager, a built-in video/audio player, optional app lock, and an AES-256-GCM encrypted Private Space. Full status table: `docs/FEATURES.md`.
+
+            ### Install
+            Most phones: ARM64 APK. Older 32-bit phones: armeabi-v7a APK. Allow installs from your browser or file manager when Android asks. Check the download against `SHA256SUMS.txt`.
+
             ### Important limits
-            - This is an early preview, not a production-hardened privacy browser. See README for implemented features and known limitations.
-            - Windows and Linux desktop packages are intentionally not attached: the current desktop source is only a C++ shell scaffold and does not render web pages. We will not publish it as a working browser until a real engine is integrated and smoke-tested.
-            - Windows x86 support remains unverified for a current security-supported CEF binary; no Windows x86 executable will be published until verified.
-            - Windows packages, when available, will be unsigned unless a signing certificate is acquired.
+            - Early preview, not a production-hardened privacy browser. Several features were verified only on an emulator: app lock unlock, Private Space with the device-credential key, player with real media, and private-tab isolation. Please test them on your phone.
+            - Not implemented: VPN, ad-block filter lists and per-site exceptions, background download service, and a recovery path for a lost Private Space key.
+            - Downloads continue only while Veyra is running.
             - Emulator CI is not a substitute for physical-device testing.
+            - Windows and Linux builds are not attached to this release yet.
