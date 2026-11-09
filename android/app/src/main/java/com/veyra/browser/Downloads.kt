@@ -39,6 +39,9 @@ class DownloadItem(
     @Volatile var savedUri: String? = null
     @Volatile var cancelRequested = false
     @Volatile var resumable = true
+    /** Saved in the app-private, lock-protected folder instead of the public Downloads folder. */
+    @Volatile var privateFolder = false
+    val inPrivateFolder: Boolean get() = isPrivate || privateFolder
 }
 
 /**
@@ -93,10 +96,11 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
     }
 
     /** Direct URL download (used for plain media/file links). Verifies status and content type. */
-    fun enqueueUrl(url: String, isPrivate: Boolean) {
+    fun enqueueUrl(url: String, isPrivate: Boolean, privateFolder: Boolean = false) {
         if (!DownloadNaming.isHttpUrl(url)) return
         val item = DownloadItem(ids.incrementAndGet(), url,
             DownloadNaming.uniqueName(DownloadNaming.fileName(null, url), takenNames()), null, isPrivate)
+        item.privateFolder = privateFolder
         items.add(0, item)
         pool.execute { runFromUrl(item, 0L) }
         changedNow()
@@ -260,9 +264,8 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         // Private downloads must never be published to the shared MediaStore Downloads collection.
         // Keep them under app-specific storage so other apps and gallery/downloads scanners cannot
         // discover them. This is app-sandbox privacy, not encrypted vault storage.
-        if (item.isPrivate) {
-            val dir = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "VeyraPrivate")
-                .apply { mkdirs() }
+        if (item.inPrivateFolder) {
+            val dir = privateDir(context).apply { mkdirs() }
             val target = File(dir, item.name)
             source.copyTo(target, overwrite = true)
             return FileProvider.getUriForFile(context, "${context.packageName}.files", target)
@@ -298,7 +301,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             val path = uri.lastPathSegment ?: return
             val name = path.substringAfterLast('/')
             File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra/$name").delete()
-            File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "VeyraPrivate/$name").delete()
+            File(privateDir(context), name).delete()
         }
     }
 
@@ -370,12 +373,12 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
 
     private fun persist() {
         val array = JSONArray()
-        items.filter { !it.isPrivate && it.state != DlState.RUNNING }.forEach { item ->
+        items.filter { (!it.isPrivate || it.privateFolder) && it.state != DlState.RUNNING }.forEach { item ->
             array.put(JSONObject().apply {
                 put("id", item.id); put("url", item.url); put("name", item.name)
                 put("mime", item.mime ?: ""); put("total", item.total); put("done", item.done)
                 put("state", item.state.name); put("error", item.error ?: "")
-                put("uri", item.savedUri ?: ""); put("resumable", item.resumable)
+                put("uri", item.savedUri ?: ""); put("resumable", item.resumable); put("pf", item.privateFolder)
             })
         }
         prefs.edit().putString("items", array.toString()).apply()
@@ -393,11 +396,17 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
                 item.error = o.optString("error").ifBlank { null }
                 item.savedUri = o.optString("uri").ifBlank { null }
                 item.resumable = o.optBoolean("resumable", true)
+                item.privateFolder = o.optBoolean("pf", false)
                 item.state = runCatching { DlState.valueOf(o.getString("state")) }.getOrDefault(DlState.FAILED)
                 items.add(item)
             }
         } catch (_: Exception) {
             // Ignore a corrupt download list.
         }
+    }
+
+    companion object {
+        /** Internal storage: invisible to Gallery, file managers and other apps. */
+        fun privateDir(context: Context) = File(context.filesDir, "private_videos")
     }
 }

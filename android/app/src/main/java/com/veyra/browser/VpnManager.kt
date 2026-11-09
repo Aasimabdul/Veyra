@@ -96,6 +96,29 @@ class VpnManager private constructor(context: Context) {
         notifyChanged()
     }
 
+    /**
+     * One-tap free VPN: registers a Cloudflare WARP identity on this device and stores it as the
+     * config. [onDone] runs on the UI thread with an error message, or null on success.
+     */
+    fun provisionFree(onDone: (String?) -> Unit) {
+        status = Status.CONNECTING
+        lastError = null
+        notifyChanged()
+        Thread {
+            val error = try {
+                saveConfig(WarpProvisioner.register())
+                null
+            } catch (e: Throwable) {
+                e.message ?: "Could not set up the free VPN"
+            }
+            if (error != null) {
+                status = Status.ERROR
+                lastError = error
+            }
+            main.post { notifyChanged(); onDone(error) }
+        }.apply { name = "veyra-vpn-setup"; isDaemon = true }.start()
+    }
+
     /** Call after the permission dialog has been accepted. Runs the blocking setup off the UI thread. */
     fun connect() {
         val text = configText()
