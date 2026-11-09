@@ -49,7 +49,7 @@ class MediaDetectTest {
         val items = (1..50).joinToString(",") { """{"url":"https://x.example/$it.mp4","tag":"video"}""" }
         val dup = """{"url":"https://x.example/1.mp4","tag":"video"}"""
         val r = MediaDetect.parse("""{"items":[$dup,$items]}""")
-        assertEquals(51, r.items.size)
+        assertEquals(50, r.items.size)
         assertEquals(r.items.map { it.url }.toSet().size, r.items.size)
     }
 
