@@ -28,9 +28,12 @@
       if (a && !known[a]) known[a] = { url: a, tag: tag, title: title || "" };
       else if (a && known[a] && !known[a].title && title) known[a].title = title;
     }
-    function isAdVideo(el) {
+    function isYoutubeAdShowing() {
       if (!/youtube\.com$|youtube-nocookie\.com$/.test(location.hostname)) return false;
-      return !!el.closest(".html5-video-player.ad-showing, .ytp-ad-player-overlay, .video-ads");
+      return !!document.querySelector(".html5-video-player.ad-showing, .ytp-ad-player-overlay, .video-ads");
+    }
+    function isAdVideo(el) {
+      return isYoutubeAdShowing() && !!el.closest(".html5-video-player.ad-showing, .ytp-ad-player-overlay, .video-ads");
     }
     var title = (document.title || "").slice(0, 120);
     var els = document.querySelectorAll("video, audio");
@@ -47,10 +50,12 @@
     }
     try {
       var resources = performance.getEntriesByType("resource");
-      for (var ri = Math.max(0, resources.length - 250); ri < resources.length; ri++) {
-        var ru = resources[ri].name || "";
-        if (/\.(mp4|m4v|webm|mkv|mov|3gp|ogv|mp3|m4a|aac|ogg|oga|opus|wav|flac|m3u8|mpd)(\?|#|$)/i.test(ru)) {
-          add(ru, /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac)(\?|#|$)/i.test(ru) ? "audio" : "video", title);
+      if (!isYoutubeAdShowing()) {
+        for (var ri = Math.max(0, resources.length - 250); ri < resources.length; ri++) {
+          var ru = resources[ri].name || "";
+          if (/\.(mp4|m4v|webm|mkv|mov|3gp|ogv|mp3|m4a|aac|ogg|oga|opus|wav|flac|m3u8|mpd)(\?|#|$)/i.test(ru)) {
+            add(ru, /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac)(\?|#|$)/i.test(ru) ? "audio" : "video", title);
+          }
         }
       }
     } catch (e) { /* timing entries are optional */ }
