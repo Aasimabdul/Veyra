@@ -48,6 +48,9 @@ class WallpaperDrawable(private val theme: VeyraTheme) : Drawable() {
             Style.HORIZON -> horizon(canvas, w, h)
             Style.BANDS -> bands(canvas, w, h, random)
         }
+        // A restrained starfield unifies dark themes into Veyra's intergalactic identity.
+        // Deterministic per theme so redraws do not make the wallpaper flicker.
+        if (!theme.light && style != Style.STARS) cosmicStars(canvas, w, h, Random(seed xor 0x56E11L))
         paint.shader = null
         canvas.restore()
     }
@@ -109,6 +112,19 @@ class WallpaperDrawable(private val theme: VeyraTheme) : Drawable() {
             val size = (0.6f + r.nextFloat() * 1.6f) * (w / 360f).coerceAtLeast(1f)
             paint.color = text(a(0x18 + r.nextInt(0x30)))
             canvas.drawCircle(x, y, size, paint)
+        }
+    }
+
+    private fun cosmicStars(canvas: Canvas, w: Float, h: Float, r: Random) {
+        paint.shader = null
+        paint.style = Paint.Style.FILL
+        val scale = (w / 360f).coerceAtLeast(0.75f)
+        for (i in 0 until 58) {
+            val x = r.nextFloat() * w
+            val y = r.nextFloat() * h
+            val radius = (0.45f + r.nextFloat() * 1.15f) * scale
+            paint.color = if (i % 7 == 0) accent(0x38) else text(0x20 + r.nextInt(0x24))
+            canvas.drawCircle(x, y, radius, paint)
         }
     }
 
