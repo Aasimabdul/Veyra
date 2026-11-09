@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [".github/workflows/first-release.yml"]
+    paths: [".github/workflows/first-release.yml", "android/app/src/main/**", "android/app/build.gradle.kts"]
 
 permissions:
   contents: write
