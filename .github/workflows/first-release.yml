@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: veyra-first-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   GRADLE_VERSION: "9.6.0"
