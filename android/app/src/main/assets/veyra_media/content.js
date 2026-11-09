@@ -1,5 +1,5 @@
-// Veyra media detector. Read-only: it inspects the DOM and reports media URLs to the app.
-// It never modifies the page, injects CSS, or contacts any server.
+// Veyra media detector. Inspects DOM/resource timing and reports candidate URLs to the app.
+// On YouTube it clicks visible skip-ad controls and hides ad overlays; it does not rip protected streams or contact a server.
 (function () {
   "use strict";
   var APP = "veyraMedia";
