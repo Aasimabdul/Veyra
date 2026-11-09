@@ -500,13 +500,18 @@ class MainActivity : AppCompatActivity() {
      * actions below. While the page scrolls down the action row collapses so only the pill remains.
      */
     private fun addBrowserBar() {
-        val surface = ThemeMath.mix(Palette.BG, Palette.TEXT, 0.07f)
-        val outline = ThemeMath.mix(Palette.BG, Palette.TEXT, 0.16f)
+        // Safari-inspired floating dock: a restrained accent glow that adapts to every theme.
+        val surface = ThemeMath.mix(Palette.BG, Palette.TEXT, 0.055f)
+        val accentSurface = ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.09f else 0.16f)
+        val outline = ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.34f else 0.48f)
         val capsule = column().apply {
             setPadding(dp(10), dp(8), dp(10), dp(6))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = dpf(28f)
-                setColor(surface)
+            elevation = dpf(8f)
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(accentSurface, surface, ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f))
+            ).apply {
+                cornerRadius = dpf(30f)
                 setStroke(dp(1), outline)
             }
         }
@@ -517,7 +522,8 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "Address. Tap to edit"
             background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dpf(22f)
-                setColor(Palette.BG)
+                setColor(ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.035f else 0.075f))
+                setStroke(dp(1), ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.18f))
             }
             setOnClickListener {
                 if (dockHidden) setDockCollapsed(false) else showSearch(currentUrl)
