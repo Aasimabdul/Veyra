@@ -108,6 +108,14 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* Notifications are optional; downloads work without them. */ }
     private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val browserChromeHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val hideBrowserChrome = Runnable { if (currentPage == "browse") bottomBar?.visibility = View.GONE }
+    private fun revealBrowserChrome() {
+        if (currentPage != "browse") return
+        browserChromeHandler.removeCallbacks(hideBrowserChrome)
+        bottomBar?.visibility = View.VISIBLE
+        browserChromeHandler.postDelayed(hideBrowserChrome, 2800L)
+    }
 
     private val prefs get() = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
 
@@ -203,6 +211,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        browserChromeHandler.removeCallbacks(hideBrowserChrome)
         tabs.forEach { it.session.close() }
         tabs.clear()
         super.onDestroy()
@@ -285,7 +294,12 @@ class MainActivity : AppCompatActivity() {
     private fun applyGutters() {
         val width = resources.displayMetrics.widthPixels
         val gutter = maxOf(dp(24), (width - dp(640)) / 2)
-        root.setPadding(gutter, dp(16), gutter, dp(0))
+        // Browser content uses the entire available width; other app screens retain safe gutters.
+        if (::root.isInitialized && currentPage == "browse") {
+            root.setPadding(0, 0, 0, 0)
+        } else if (::root.isInitialized) {
+            root.setPadding(gutter, dp(16), gutter, 0)
+        }
     }
 
     private fun show(page: String) {
@@ -307,7 +321,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetContent(page: String) {
+        browserChromeHandler.removeCallbacks(hideBrowserChrome)
         currentPage = page
+        if (::root.isInitialized) applyGutters()
         if (page != "private") vaultUnlocked = false
         applySecureFlag()
         urlHost = null
@@ -471,9 +487,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun attachBottomBar(bar: View) {
         bottomBar = bar
-        root.addView(bar, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(72)).apply {
-            topMargin = dp(12)
-            bottomMargin = dp(20)
+        if (currentPage == "browse") {
+            bar.visibility = View.GONE
+            bar.setOnTouchListener { _, event ->
+                if (event.action == android.view.MotionEvent.ACTION_DOWN) revealBrowserChrome()
+                false
+            }
+        }
+        root.addView(bar, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)).apply {
+            topMargin = dp(8)
+            bottomMargin = dp(8)
             leftMargin = 0
             rightMargin = 0
         })
@@ -659,7 +682,10 @@ class MainActivity : AppCompatActivity() {
         resetContent("browse")
         contentArea.gravity = Gravity.NO_GRAVITY
 
-        val top = row().apply { minimumHeight = dp(52) }
+        val top = row().apply {
+            minimumHeight = dp(48)
+            setOnClickListener { revealBrowserChrome() }
+        }
         val pill = row().apply {
             setPadding(dp(18), 0, dp(6), 0)
             contentDescription = "Edit address"
@@ -700,9 +726,7 @@ class MainActivity : AppCompatActivity() {
         }
         track.addView(fill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)))
         progressFill = fill
-        contentArea.addView(track, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)).apply {
-            topMargin = dp(10); bottomMargin = dp(6)
-        })
+        contentArea.addView(track, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)))
 
         (geckoView.parent as? ViewGroup)?.removeView(geckoView)
         cur?.let { tab ->
@@ -713,6 +737,7 @@ class MainActivity : AppCompatActivity() {
         }
         contentArea.addView(geckoView, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         addBrowserBar()
+        bottomBar?.visibility = View.GONE
     }
 
     private fun trackerShield(): View {
