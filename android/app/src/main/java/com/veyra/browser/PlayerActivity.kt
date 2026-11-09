@@ -139,10 +139,10 @@ class PlayerActivity : AppCompatActivity() {
             rightMargin = dp(24)
         })
 
-        playerView.setControllerVisibilityListener { visibility ->
+        playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility: Int ->
             topBar.visibility = visibility
             quickControls.visibility = visibility
-        }
+        })
         setContentView(root)
     }
 
