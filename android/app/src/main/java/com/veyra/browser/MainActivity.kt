@@ -39,9 +39,10 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- * Veyra Android shell. Every screen follows the neumorphic mockups (see [UiKit]); only features
- * that actually work are exposed. Multiple tabs, private browsing and the download manager are
- * not implemented yet and are labelled as such instead of being faked.
+ * Veyra Android browser shell. Uses GeckoView sessions for normal/private tabs, device-local
+ * history/bookmarks, Gecko content blocking, the download center, WireGuard config import,
+ * encrypted Private Space, theme-specific generated wallpapers and Media3 playback. Features
+ * requiring a hosted provider/backend are kept explicitly separate from local functionality.
  */
 class MainActivity : AppCompatActivity() {
     private data class HistoryEntry(val url: String, var title: String, val time: Long)
