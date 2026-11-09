@@ -269,6 +269,8 @@ class MainActivity : AppCompatActivity() {
         when {
             currentPage == "lock" -> super.onBackPressed()
             currentPage == "browse" && canGoBack -> cur?.session?.goBack()
+            currentPage == "browse" -> show("home")
+            currentPage != "home" && !cur?.url.isNullOrBlank() -> show("browse")
             currentPage != "home" -> show("home")
             else -> super.onBackPressed()
         }
@@ -924,7 +926,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun navigate(raw: String) {
-        val uri = AddressResolver.resolve(raw) ?: run {
+        val trimmed = raw.trim()
+        // Hand torrent magnets/files to an installed torrent client (for example Flud).
+        // Veyra does not implement a torrent engine or pretend a torrent is a direct HTTP file.
+        if (trimmed.startsWith("magnet:", true) ||
+            (trimmed.startsWith("http", true) && trimmed.substringBefore('#').substringBefore('?').endsWith(".torrent", true))) {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(trimmed)))
+            } catch (_: Exception) {
+                Toast.makeText(this, "Install a torrent client such as Flud to open this link", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        val uri = AddressResolver.resolve(trimmed) ?: run {
             Toast.makeText(this, "Enter a valid address or search term", Toast.LENGTH_SHORT).show()
             return
         }
@@ -1463,11 +1477,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startDownload(response: org.mozilla.geckoview.WebResponse, isPrivate: Boolean) {
+    private fun requestDownloadNotifications() {
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun startUrlDownload(url: String, isPrivate: Boolean) {
+        requestDownloadNotifications()
+        downloads.enqueueUrl(url, isPrivate)
+        Toast.makeText(this, "Download started", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun startDownload(response: org.mozilla.geckoview.WebResponse, isPrivate: Boolean) {
+        requestDownloadNotifications()
         downloads.enqueue(response, isPrivate)
         Toast.makeText(this, "Download started", Toast.LENGTH_SHORT).show()
     }
@@ -1964,8 +1988,7 @@ class MainActivity : AppCompatActivity() {
                 if (media.downloadable) {
                     actions.addView(textButton("Save") {
                         dialog.dismiss()
-                        downloads.enqueueUrl(media.url, tab.isPrivate)
-                        Toast.makeText(this, "Download started", Toast.LENGTH_SHORT).show()
+                        startUrlDownload(media.url, tab.isPrivate)
                     }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
                 }
                 card.addView(actions, matchWrap())
@@ -2038,16 +2061,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showBrowserMenu() {
-        showSheet { sheet, dialog ->
+        showSideSheet { sheet, dialog ->
             fun item(paths: List<String>, text: String, action: () -> Unit) {
                 val rowView = row().apply {
-                    setPadding(dp(18), dp(12), dp(18), dp(12))
-                    neu(this, 20, Depth.BUTTON, pressable = true)
+                    setPadding(dp(12), dp(6), dp(12), dp(6))
+                    minimumHeight = dp(44)
+                    neu(this, 16, Depth.BUTTON, pressable = true)
                     setOnClickListener { dialog.dismiss(); action() }
                 }
-                rowView.addView(icon(paths, Palette.ACCENT, 20))
-                rowView.addView(label(text, 15f, Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
-                sheet.addView(rowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(14) })
+                rowView.addView(icon(paths, Palette.ACCENT, 18))
+                rowView.addView(label(text, 14f, Palette.TEXT, 1).apply { setPadding(dp(10), 0, 0, 0) })
+                sheet.addView(rowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { bottomMargin = dp(6) })
             }
             item(Icons.BOOKMARK, "Bookmark this page") {
                 if (currentUrl.isNotBlank()) {
@@ -2071,8 +2095,7 @@ class MainActivity : AppCompatActivity() {
             item(Icons.TABS, if (cur?.desktop == true) "Mobile site" else "Desktop site") { toggleDesktop() }
             if (DownloadNaming.looksLikeDirectFile(currentUrl)) {
                 item(Icons.DOWNLOAD, "Download this file") {
-                    downloads.enqueueUrl(currentUrl, cur?.isPrivate == true)
-                    Toast.makeText(this, "Download started", Toast.LENGTH_SHORT).show()
+                    startUrlDownload(currentUrl, cur?.isPrivate == true)
                 }
             }
             item(Icons.CLOCK, "History") { show("history") }
@@ -2187,6 +2210,34 @@ class MainActivity : AppCompatActivity() {
                 lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
             sheet.addView(actions, matchWrap())
         }
+    }
+
+    /** Compact right-side action drawer used by the browser's three-dot menu. */
+    private fun showSideSheet(build: (LinearLayout, Dialog) -> Unit) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val sheet = column().apply {
+            setPadding(dp(12), dp(18), dp(12), dp(18))
+            neu(this, 24, Depth.CARD)
+            isClickable = true
+        }
+        build(sheet, dialog)
+        val scroller = ScrollView(this).apply {
+            clipToPadding = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            setPadding(0, dp(8), 0, dp(8))
+            addView(sheet)
+        }
+        dialog.setContentView(scroller)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.argb(170, 4, 9, 16)))
+            setLayout(dp(292), ViewGroup.LayoutParams.MATCH_PARENT)
+            setGravity(Gravity.END)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.show()
+        dialog.window?.setLayout(dp(292), ViewGroup.LayoutParams.MATCH_PARENT)
     }
 
     private fun showSheet(build: (LinearLayout) -> Unit) = showSheet { sheet, _ -> build(sheet) }
