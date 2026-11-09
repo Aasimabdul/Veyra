@@ -7,6 +7,7 @@
   var lastSent = "";
   var timer = null;
   var known = Object.create(null);
+  var seenBlobs = Object.create(null);
   var adMediaSkipped = 0;
 
   function abs(u) {
@@ -19,7 +20,10 @@
     adMediaSkipped = 0;
     function add(u, tag, title) {
       if (!u) return;
-      if (u.indexOf("blob:") === 0 || u.indexOf("mediastream:") === 0) { blobs++; return; }
+      if (u.indexOf("blob:") === 0 || u.indexOf("mediastream:") === 0) {
+        if (!seenBlobs[u]) { seenBlobs[u] = true; blobs++; }
+        return;
+      }
       var a = abs(u);
       if (a && !known[a]) known[a] = { url: a, tag: tag, title: title || "" };
       else if (a && known[a] && !known[a].title && title) known[a].title = title;
@@ -62,8 +66,19 @@
     return { page: location.href, items: all.slice(-60), blobs: blobs, adMediaSkipped: adMediaSkipped };
   }
 
+  function handleSkippableYouTubeAd() {
+    if (!/youtube\.com$|youtube-nocookie\.com$/.test(location.hostname)) return;
+    try {
+      var skip = document.querySelector(".ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern");
+      if (skip && !skip.disabled && skip.getClientRects().length) skip.click();
+      var overlays = document.querySelectorAll(".ytp-ad-overlay-container, .ytp-ad-text-overlay, .ytp-ad-player-overlay");
+      for (var i = 0; i < overlays.length; i++) overlays[i].style.setProperty("display", "none", "important");
+    } catch (e) { /* site UI changes are expected */ }
+  }
+
   function report() {
     timer = null;
+    handleSkippableYouTubeAd();
     var payload = collect();
     var key = JSON.stringify(payload);
     if (key === lastSent) return;
