@@ -66,6 +66,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         val now = System.currentTimeMillis()
         if (now - lastNotify < 500) return
         lastNotify = now
+        items.filter { it.state == DlState.RUNNING }.forEach { notifyProgress(it) }
         main.post { onChange() }
     }
 
@@ -310,6 +311,36 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         }
     }
 
+    private fun notificationsAllowed(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    /** Persistent download-only notification with live byte count and network throughput. */
+    private fun notifyProgress(item: DownloadItem) {
+        if (!notificationsAllowed()) return
+        val totalKnown = item.total > 0
+        val percent = if (totalKnown) ((item.done * 100L) / item.total).toInt().coerceIn(0, 100) else 0
+        val title = if (item.isPrivate) "Private download in progress" else item.name
+        val details = buildString {
+            append(DownloadNaming.formatBytes(item.done))
+            if (totalKnown) append(" of " + DownloadNaming.formatBytes(item.total))
+            append(" · " + DownloadNaming.formatSpeed(item.speed))
+        }
+        val notification = NotificationCompat.Builder(context, "downloads")
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(title)
+            .setContentText(details)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(details))
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setProgress(if (totalKnown) 100 else 0, percent, !totalKnown)
+            .setVisibility(if (item.isPrivate) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
+            .build()
+        context.getSystemService(NotificationManager::class.java).notify(item.id.toInt(), notification)
+    }
+
     private fun notifyDone(item: DownloadItem) {
         if (Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -327,6 +358,8 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             .setContentTitle(if (item.isPrivate) "Download complete" else item.name)
             .setContentText("Saved to Downloads/Veyra")
             .setAutoCancel(true)
+            .setOngoing(false)
+            .setProgress(0, 0, false)
             .setContentIntent(pending)
             .setVisibility(if (item.isPrivate) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
             .build()
