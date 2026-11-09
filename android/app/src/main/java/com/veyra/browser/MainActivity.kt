@@ -502,7 +502,7 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER
                 if (active) neu(this, 18, Depth.WELL, inset = true)
             }
-            well.addView(icon(item.paths, if (active) Palette.ACCENT else Palette.MUTED, 22))
+            well.addView(icon(item.paths, if (active) Palette.ACCENT else Palette.TEXT, 22))
             slot.addView(well, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER))
             nav.addView(slot, lp(0, dp(72), 1f))
         }
@@ -523,15 +523,15 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener { revealBrowserChrome(); action() }
                 addView(icon(paths, color, 22, filled))
             }
-        val back = cell(Icons.BACK, "Back", Palette.MUTED) {
+        val back = cell(Icons.BACK, "Back", Palette.TEXT) {
             if (canGoBack) cur?.session?.goBack() else show("home")
         }
-        val forward = cell(Icons.FORWARD, "Forward", Palette.MUTED) {
+        val forward = cell(Icons.FORWARD, "Forward", Palette.TEXT) {
             if (canGoForward) cur?.session?.goForward()
         }.apply { alpha = if (canGoForward) 1f else 0.4f }
         backButton = back
         forwardButton = forward
-        val share = cell(Icons.SHARE, "Share page", Palette.MUTED) {
+        val share = cell(Icons.SHARE, "Share page", Palette.TEXT) {
             if (currentUrl.isNotBlank()) {
                 startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -879,7 +879,15 @@ class MainActivity : AppCompatActivity() {
                     history.add(HistoryEntry(url, "", System.currentTimeMillis()))
                     persistHistory()
                 }
-                if (tab === cur) urlHost?.text = hostOf(url)
+                if (tab === cur) {
+                    urlHost?.text = hostOf(url)
+                    progressFill?.let { fill ->
+                        fill.animate().cancel()
+                        fill.scaleX = 0f
+                        fill.visibility = View.VISIBLE
+                        (fill.parent as? View)?.visibility = View.VISIBLE
+                    }
+                }
             }
 
             override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) { tab.canGoBack = canGoBack }
@@ -915,10 +923,17 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChange(session: GeckoSession, progress: Int) {
                 if (tab !== cur) return
                 progressFill?.let { bar ->
-                    bar.visibility = if (progress in 1..99) View.VISIBLE else View.INVISIBLE
                     bar.pivotX = 0f
-                    bar.scaleX = progress / 100f
                     (bar.parent as? View)?.visibility = View.VISIBLE
+                    bar.visibility = View.VISIBLE
+                    bar.animate().cancel()
+                    bar.animate()
+                        .scaleX(progress.coerceIn(0, 100) / 100f)
+                        .setDuration(120L)
+                        .withEndAction {
+                            if (progress >= 100) bar.visibility = View.INVISIBLE
+                        }
+                        .start()
                 }
             }
         }
