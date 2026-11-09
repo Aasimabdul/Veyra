@@ -63,7 +63,7 @@
       if (h && MEDIA_EXT.test(h)) add(h, "link", (links[m].textContent || "").trim().slice(0, 80) || title);
     }
     var all = Object.keys(known).map(function (key) { return known[key]; });
-    return { page: location.href, items: all.slice(-60), blobs: blobs, adMediaSkipped: adMediaSkipped };
+    return { page: location.href, items: all.slice(-60), blobs: Object.keys(seenBlobs).length, adMediaSkipped: adMediaSkipped };
   }
 
   function handleSkippableYouTubeAd() {
