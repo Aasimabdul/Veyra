@@ -24,6 +24,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoRuntime
@@ -57,6 +59,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private lateinit var contentArea: LinearLayout
     private var bottomBar: View? = null
+    private var dockHidden = false
+    private var keyboardVisible = false
+    private var lastTouchY = 0f
+    private var systemInsetLeft = 0
+    private var systemInsetTop = 0
+    private var systemInsetRight = 0
+    private var systemInsetBottom = 0
+    private var imeInsetBottom = 0
     private var urlHost: TextView? = null
     private var backButton: View? = null
     private var forwardButton: View? = null
@@ -109,19 +119,32 @@ class MainActivity : AppCompatActivity() {
     ) { /* Notifications are optional; downloads work without them. */ }
     private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val browserChromeHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val hideBrowserChrome = Runnable { if (currentPage == "browse") bottomBar?.visibility = View.GONE }
+    private val hideBrowserChrome = Runnable { hideBrowserDock() }
     private fun revealBrowserChrome() {
-        if (currentPage != "browse") return
+        if (currentPage != "browse" || keyboardVisible) return
         browserChromeHandler.removeCallbacks(hideBrowserChrome)
-        bottomBar?.visibility = View.VISIBLE
-        browserChromeHandler.postDelayed(hideBrowserChrome, 2800L)
+        dockHidden = false
+        bottomBar?.let { bar ->
+            bar.visibility = View.VISIBLE
+            bar.animate().cancel()
+            bar.animate().translationY(0f).alpha(1f).setDuration(200L).start()
+        }
+    }
+
+    private fun hideBrowserDock() {
+        if (currentPage != "browse" || keyboardVisible) return
+        dockHidden = true
+        bottomBar?.let { bar ->
+            bar.animate().cancel()
+            bar.animate().translationY((bar.height + dp(16)).toFloat()).alpha(0f).setDuration(180L).start()
+        }
     }
 
     private val prefs get() = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         themeKey = prefs.getString("theme", Themes.SYSTEM) ?: Themes.SYSTEM
         strictProtection = prefs.getBoolean("protection_strict", false)
         cookieMode = prefs.getString("cookie_mode", "trackers") ?: "trackers"
@@ -142,7 +165,22 @@ class MainActivity : AppCompatActivity() {
                 .build()
         ).also { sharedRuntime = it }
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
-        geckoView = GeckoView(this)
+        geckoView = GeckoView(this).apply {
+            setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> lastTouchY = event.y
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        val delta = event.y - lastTouchY
+                        if (delta < -dp(8)) hideBrowserDock()
+                        else if (delta > dp(8)) revealBrowserChrome()
+                        lastTouchY = event.y
+                    }
+                    android.view.MotionEvent.ACTION_UP,
+                    android.view.MotionEvent.ACTION_CANCEL -> lastTouchY = 0f
+                }
+                false
+            }
+        }
         downloads = DownloadCenter(this) {
             if (currentPage == "downloads") refreshDownloads()
         }
@@ -159,6 +197,34 @@ class MainActivity : AppCompatActivity() {
         contentArea = column()
         root.addView(contentArea, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            systemInsetLeft = bars.left
+            systemInsetTop = bars.top
+            systemInsetRight = bars.right
+            systemInsetBottom = bars.bottom
+            imeInsetBottom = if (insets.isVisible(WindowInsetsCompat.Type.ime())) ime.bottom else 0
+            keyboardVisible = imeInsetBottom > systemInsetBottom
+            applyGutters()
+            bottomBar?.let { bar ->
+                if (keyboardVisible) {
+                    bar.animate().cancel()
+                    bar.visibility = View.GONE
+                } else {
+                    bar.visibility = View.VISIBLE
+                    if (currentPage == "browse" && dockHidden) {
+                        bar.alpha = 0f
+                        bar.translationY = (bar.height + dp(16)).toFloat()
+                    } else {
+                        bar.alpha = 1f
+                        bar.translationY = 0f
+                    }
+                }
+            }
+            insets
+        }
+        ViewCompat.requestApplyInsets(root)
         applyGutters()
         loadBookmarks()
         loadHistory()
@@ -294,14 +360,17 @@ class MainActivity : AppCompatActivity() {
 
     /** 24dp gutter on phones; content is centred at a readable width on tablets. */
     private fun applyGutters() {
+        if (!::root.isInitialized) return
         val width = resources.displayMetrics.widthPixels
         val gutter = maxOf(dp(24), (width - dp(640)) / 2)
-        // Browser content uses the entire available width; other app screens retain safe gutters.
-        if (::root.isInitialized && currentPage == "browse") {
-            root.setPadding(0, 0, 0, 0)
-        } else if (::root.isInitialized) {
-            root.setPadding(gutter, dp(16), gutter, 0)
-        }
+        val contentGutter = if (currentPage == "browse") 0 else gutter
+        val contentTop = if (currentPage == "browse") 0 else dp(16)
+        root.setPadding(
+            systemInsetLeft + contentGutter,
+            systemInsetTop + contentTop,
+            systemInsetRight + contentGutter,
+            maxOf(systemInsetBottom, imeInsetBottom)
+        )
     }
 
     private fun show(page: String) {
@@ -324,6 +393,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun resetContent(page: String) {
         browserChromeHandler.removeCallbacks(hideBrowserChrome)
+        dockHidden = false
         currentPage = page
         if (::root.isInitialized) applyGutters()
         if (page != "private") vaultUnlocked = false
@@ -480,7 +550,9 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
             })
         }
-        val menu = cell(Icons.MENU, "Menu", Palette.MUTED, filled = true) { showBrowserMenu() }
+        val menu = cell(Icons.MENU, "Menu", Palette.TEXT, filled = true) { showBrowserMenu() }.apply {
+            setOnLongClickListener { showBrowserMenu(); true }
+        }
         listOf(back, forward, share, tabs, menu).forEach { view ->
             bar.addView(view, lp(0, dp(48), 1f))
         }
@@ -490,7 +562,9 @@ class MainActivity : AppCompatActivity() {
     private fun attachBottomBar(bar: View) {
         bottomBar = bar
         if (currentPage == "browse") {
-            bar.visibility = View.GONE
+            dockHidden = true
+            bar.alpha = 0f
+            bar.translationY = dp(80).toFloat()
             bar.setOnTouchListener { _, event ->
                 if (event.action == android.view.MotionEvent.ACTION_DOWN) revealBrowserChrome()
                 false
@@ -1605,6 +1679,8 @@ class MainActivity : AppCompatActivity() {
             if (DownloadNaming.looksPlayable(currentUrl)) {
                 item(Icons.PLAY, "Play in Veyra") { playMedia(Uri.parse(currentUrl), null) }
             }
+            item(Icons.BOOKMARK, "Bookmarks") { show("bookmarks") }
+            item(Icons.DOWNLOAD, "Downloads") { show("downloads") }
             item(Icons.SEARCH, "Find in page") { showFindSheet() }
             item(Icons.TABS, if (cur?.desktop == true) "Mobile site" else "Desktop site") { toggleDesktop() }
             if (DownloadNaming.looksLikeDirectFile(currentUrl)) {
