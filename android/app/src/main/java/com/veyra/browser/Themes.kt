@@ -59,7 +59,10 @@ object Themes {
         VeyraTheme("graphite", "Graphite", c(0x1E2126), c(0xECEFF3), c(0x9AA1AB), c(0x8AB4FF), false),
         VeyraTheme("amoled", "AMOLED Blue", c(0x02060F), c(0xE8F0FB), c(0x8FA3BF), c(0x2EA8FF), false),
         VeyraTheme("sunset", "Sunset", c(0x241518), c(0xFFF0E6), c(0xC9A596), c(0xFF9A4D), false),
-        VeyraTheme("frost", "Silver Frost", c(0xEDEFF2), c(0x20242B), c(0x535B67), c(0x1D5FD6), true)
+        VeyraTheme("frost", "Silver Frost", c(0xEDEFF2), c(0x20242B), c(0x535B67), c(0x1D5FD6), true),
+        VeyraTheme("mocha", "Mocha Dune", c(0x1C1512), c(0xF5ECE6), c(0xBBA89C), c(0xD9A066), false),
+        VeyraTheme("lavender", "Lavender Mist", c(0xECE8F5), c(0x241B3A), c(0x5A5075), c(0x6A3FD0), true),
+        VeyraTheme("mint", "Mint Garden", c(0xE4F1EC), c(0x14302A), c(0x4A6860), c(0x0B7A5E), true)
     )
 
     const val SYSTEM = "system"

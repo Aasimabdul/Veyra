@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private lateinit var contentArea: LinearLayout
     private var bottomBar: View? = null
+    private var browserActionRow: View? = null
     private var dockHidden = false
     private var keyboardVisible = false
     private var lastTouchY = 0f
@@ -319,7 +320,16 @@ class MainActivity : AppCompatActivity() {
             isAppearanceLightStatusBars = theme.light
             isAppearanceLightNavigationBars = theme.light
         }
-        if (::root.isInitialized) root.setBackgroundColor(theme.bg)
+        activeTheme = theme
+        if (::root.isInitialized) applyRootBackground()
+    }
+
+    private var activeTheme: VeyraTheme = Themes.all.first()
+
+    /** Home shows the theme's wallpaper; every other screen stays a plain theme colour. */
+    private fun applyRootBackground() {
+        if (currentPage == "home") root.background = WallpaperDrawable(activeTheme)
+        else root.setBackgroundColor(activeTheme.bg)
     }
 
     private fun antiTrackingFlags() =
@@ -370,13 +380,14 @@ class MainActivity : AppCompatActivity() {
     private fun resetContent(page: String) {
         dockHidden = false
         currentPage = page
-        if (::root.isInitialized) applyGutters()
+        if (::root.isInitialized) { applyGutters(); applyRootBackground() }
         if (page != "private") vaultUnlocked = false
         applySecureFlag()
         urlHost = null
         backButton = null
         forwardButton = null
         progressFill = null
+        browserActionRow = null
         hideKeyboard()
         contentArea.removeAllViews()
         bottomBar?.let { root.removeView(it) }
@@ -395,8 +406,8 @@ class MainActivity : AppCompatActivity() {
      */
     private fun scrollPage(): LinearLayout {
         val gutter = root.paddingLeft
+        // clipChildren stays true: otherwise scrolled rows paint under the dock and system bars.
         val scroll = ScrollView(this).apply {
-            clipChildren = false
             clipToPadding = false
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -484,37 +495,101 @@ class MainActivity : AppCompatActivity() {
         attachBottomBar(nav)
     }
 
+    /**
+     * Safari-style dock: one rounded capsule holding the address pill on top and the five browsing
+     * actions below. While the page scrolls down the action row collapses so only the pill remains.
+     */
     private fun addBrowserBar() {
-        val bar = row().apply {
-            gravity = Gravity.CENTER
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(8), dp(5), dp(8), dp(5))
+        val surface = ThemeMath.mix(Palette.BG, Palette.TEXT, 0.07f)
+        val outline = ThemeMath.mix(Palette.BG, Palette.TEXT, 0.16f)
+        val capsule = column().apply {
+            setPadding(dp(10), dp(8), dp(10), dp(6))
             background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                cornerRadius = dp(34).toFloat()
-                setColor(Color.argb(245, 12, 25, 42))
-                setStroke(dp(1), Color.argb(90, 53, 213, 245))
+                cornerRadius = dpf(28f)
+                setColor(surface)
+                setStroke(dp(1), outline)
             }
-            elevation = dp(12).toFloat()
-            clipToOutline = true
         }
-        fun cell(paths: List<String>, description: String, color: Int, filled: Boolean = false, action: () -> Unit): View =
+
+        // Address pill: security state, host, tracker shield, reload.
+        val pill = row().apply {
+            setPadding(dp(14), 0, dp(4), 0)
+            contentDescription = "Address. Tap to edit"
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dpf(22f)
+                setColor(Palette.BG)
+            }
+            setOnClickListener {
+                if (dockHidden) setDockCollapsed(false) else showSearch(currentUrl)
+            }
+        }
+        val secure = currentUrl.startsWith("https://", ignoreCase = true)
+        pill.addView(icon(if (secure) Icons.LOCK else Icons.INFO, if (secure) Palette.ACCENT else Palette.MUTED, 16).apply {
+            contentDescription = if (secure) "Secure connection" else "Connection is not encrypted"
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        })
+        if (cur?.isPrivate == true) {
+            pill.addView(label("PRIVATE", 10f, Palette.ACCENT, 1).apply {
+                letterSpacing = 0.1f
+                setPadding(dp(10), 0, 0, 0)
+            })
+        }
+        urlHost = label(hostOf(currentUrl), 14f, Palette.TEXT, 1).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(10), 0, dp(6), 0)
+        }
+        pill.addView(urlHost, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val shield = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            contentDescription =
+                if (trackingProtectionEnabled) "Tracker protection on, tap to turn off"
+                else "Tracker protection off, tap to turn on"
+            isClickable = true
+            setOnClickListener { setTrackingProtection(!trackingProtectionEnabled); show("browse"); cur?.session?.reload() }
+            addView(icon(
+                if (trackingProtectionEnabled) Icons.SHIELD else Icons.SHIELD_OFF,
+                if (trackingProtectionEnabled) Palette.ACCENT else Palette.MUTED, 20
+            ))
+        }
+        pill.addView(shield, lp(dp(40), dp(40)))
+        val reload = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            contentDescription = "Reload page"
+            isClickable = true
+            setOnClickListener { cur?.session?.reload() }
+            addView(icon(Icons.RELOAD, Palette.MUTED, 18))
+        }
+        pill.addView(reload, lp(dp(40), dp(40)))
+        capsule.addView(pill, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+
+        // Thin load-progress line between the pill and the action row.
+        val track = FrameLayout(this).apply { visibility = View.INVISIBLE }
+        val fill = View(this).apply {
+            setBackgroundColor(Palette.ACCENT)
+            pivotX = 0f
+            scaleX = 0f
+        }
+        track.addView(fill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)))
+        progressFill = fill
+        capsule.addView(track, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)).apply { topMargin = dp(4) })
+
+        // Action row.
+        val actions = row().apply { gravity = Gravity.CENTER }
+        fun cell(paths: List<String>, description: String, filled: Boolean = false, action: () -> Unit): View =
             LinearLayout(this).apply {
                 gravity = Gravity.CENTER
                 contentDescription = description
                 isClickable = true
-                setOnClickListener { revealBrowserChrome(); action() }
-                addView(icon(paths, color, 22, filled))
+                setOnClickListener { action() }
+                addView(icon(paths, Palette.TEXT, 22, filled))
             }
-        val back = cell(Icons.BACK, "Back", Palette.TEXT) {
-            if (canGoBack) cur?.session?.goBack() else show("home")
-        }
-        val forward = cell(Icons.FORWARD, "Forward", Palette.TEXT) {
-            if (canGoForward) cur?.session?.goForward()
-        }.apply { alpha = if (canGoForward) 1f else 0.4f }
+        val back = cell(Icons.BACK, "Back") { if (canGoBack) cur?.session?.goBack() else show("home") }
+        val forward = cell(Icons.FORWARD, "Forward") { if (canGoForward) cur?.session?.goForward() }
+            .apply { alpha = if (canGoForward) 1f else 0.4f }
         backButton = back
         forwardButton = forward
-        val share = cell(Icons.SHARE, "Share page", Palette.TEXT) {
+        val share = cell(Icons.SHARE, "Share page") {
             if (currentUrl.isNotBlank()) {
                 startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -522,37 +597,57 @@ class MainActivity : AppCompatActivity() {
                 }, "Share page"))
             }
         }
-        val tabs = LinearLayout(this).apply {
+        val tabsButton = LinearLayout(this).apply {
             gravity = Gravity.CENTER
             contentDescription = "Tabs, ${tabs.size} open"
             isClickable = true
-            setOnClickListener { revealBrowserChrome(); show("tabs") }
+            setOnClickListener { show("tabs") }
             addView(label(tabs.size.toString(), 12f, Palette.ACCENT, 1).apply {
                 gravity = Gravity.CENTER
                 neu(this, 8, Depth.KNOB, inset = true)
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
             })
         }
-        val menu = cell(Icons.MENU, "Menu", Palette.TEXT, filled = true) { showBrowserMenu() }.apply {
-            setOnLongClickListener { showBrowserMenu(); true }
-        }
-        listOf(back, forward, share, tabs, menu).forEach { view ->
-            bar.addView(view, lp(dp(48), dp(48)))
-        }
-        attachBottomBar(bar)
+        val menu = cell(Icons.MENU, "Menu", filled = true) { showBrowserMenu() }
+        listOf(back, forward, share, tabsButton, menu).forEach { actions.addView(it, lp(0, dp(44), 1f)) }
+        capsule.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(2) })
+        browserActionRow = actions
+
+        attachBottomBar(capsule, matchWidth = true)
     }
 
-    private fun attachBottomBar(bar: View) {
+    private fun setDockCollapsed(collapsed: Boolean) {
+        if (dockHidden == collapsed) return
+        dockHidden = collapsed
+        browserActionRow?.visibility = if (collapsed) View.GONE else View.VISIBLE
+    }
+
+    private var lastScrollY = 0
+
+    /** Collapses the dock while reading down a page and restores it on scroll up or at the top. */
+    private fun onPageScrolled(scrollY: Int) {
+        val delta = scrollY - lastScrollY
+        lastScrollY = scrollY
+        if (currentPage != "browse" || keyboardVisible) return
+        val threshold = dp(14)
+        if (scrollY <= 0 || delta < -threshold) setDockCollapsed(false)
+        else if (delta > threshold && scrollY > dp(60)) setDockCollapsed(true)
+    }
+
+    private fun attachBottomBar(bar: View, matchWidth: Boolean = false) {
         bottomBar = bar
         dockHidden = false
         bar.alpha = 1f
         bar.translationY = 0f
-        root.addView(bar, lp(ViewGroup.LayoutParams.WRAP_CONTENT, dp(58)).apply {
+        root.addView(bar, lp(
+            if (matchWidth) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
+            if (matchWidth) ViewGroup.LayoutParams.WRAP_CONTENT else dp(58)
+        ).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = dp(8)
-            bottomMargin = dp(10)
-            leftMargin = dp(20)
-            rightMargin = dp(20)
+            topMargin = dp(if (matchWidth) 6 else 8)
+            bottomMargin = dp(if (matchWidth) 8 else 10)
+            leftMargin = dp(if (matchWidth) 12 else 20)
+            rightMargin = dp(if (matchWidth) 12 else 20)
         })
     }
 
@@ -735,54 +830,7 @@ class MainActivity : AppCompatActivity() {
     private fun showBrowser() {
         resetContent("browse")
         contentArea.gravity = Gravity.NO_GRAVITY
-
-        val top = row().apply {
-            minimumHeight = dp(48)
-            setOnClickListener { revealBrowserChrome() }
-        }
-        val pill = row().apply {
-            setPadding(dp(18), 0, dp(6), 0)
-            contentDescription = "Edit address; long press to show browser controls"
-            setOnClickListener { showSearch(currentUrl) }
-            setOnLongClickListener { revealBrowserChrome(); true }
-            neu(this, 26, Depth.FIELD, inset = true)
-        }
-        pill.addView(icon(Icons.LOCK, Palette.ACCENT, 16))
-        if (cur?.isPrivate == true) {
-            pill.addView(label("PRIVATE", 10f, Palette.ACCENT, 1).apply {
-                letterSpacing = 0.1f
-                setPadding(dp(10), 0, 0, 0)
-            })
-        }
-        urlHost = label(hostOf(currentUrl), 14f, Palette.TEXT, 1).apply {
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            setPadding(dp(12), 0, dp(8), 0)
-        }
-        pill.addView(urlHost, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val reload = LinearLayout(this).apply {
-            gravity = Gravity.CENTER
-            contentDescription = "Reload page"
-            isClickable = true
-            setOnClickListener { cur?.session?.reload() }
-            addView(icon(Icons.RELOAD, Palette.MUTED, 18))
-        }
-        pill.addView(reload, lp(dp(40), dp(40)))
-        top.addView(pill, lp(0, dp(52), 1f).apply { rightMargin = dp(14) })
-        top.addView(trackerShield())
-        contentArea.addView(top, matchWrap())
-
-        // Thin progress track under the address row.
-        val track = FrameLayout(this).apply { visibility = View.INVISIBLE }
-        val fill = View(this).apply {
-            setBackgroundColor(Palette.ACCENT)
-            pivotX = 0f
-            scaleX = 0f
-        }
-        track.addView(fill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)))
-        progressFill = fill
-        contentArea.addView(track, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)))
-
+        lastScrollY = 0
         (geckoView.parent as? ViewGroup)?.removeView(geckoView)
         cur?.let { tab ->
             if (geckoView.session !== tab.session) {
@@ -790,26 +838,10 @@ class MainActivity : AppCompatActivity() {
                 geckoView.setSession(tab.session)
             }
         }
+        // The page fills the whole content area; the address pill lives in the bottom dock.
         contentArea.addView(geckoView, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         addBrowserBar()
         revealBrowserChrome()
-    }
-
-    private fun trackerShield(): View {
-        val button = LinearLayout(this).apply {
-            gravity = Gravity.CENTER
-            setOnClickListener { setTrackingProtection(!trackingProtectionEnabled); show("browse"); cur?.session?.reload() }
-            neu(this, 18, Depth.BUTTON, pressable = true)
-        }
-        button.contentDescription =
-            if (trackingProtectionEnabled) "Tracker protection on, tap to turn off"
-            else "Tracker protection off, tap to turn on"
-        button.addView(icon(
-            if (trackingProtectionEnabled) Icons.SHIELD else Icons.SHIELD_OFF,
-            if (trackingProtectionEnabled) Palette.ACCENT else Palette.MUTED, 22
-        ))
-        button.layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
-        return button
     }
 
     private fun navigate(raw: String) {
@@ -915,6 +947,11 @@ class MainActivity : AppCompatActivity() {
                         }
                         .start()
                 }
+            }
+        }
+        session.scrollDelegate = object : GeckoSession.ScrollDelegate {
+            override fun onScrollChanged(session: GeckoSession, scrollX: Int, scrollY: Int) {
+                if (tab === cur) onPageScrolled(scrollY)
             }
         }
         session.open(runtime)

@@ -5,8 +5,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ThemesTest {
-    @Test fun hasAtLeastTenDistinctThemes() {
-        assertTrue(Themes.all.size >= 10)
+    @Test fun hasFifteenDistinctThemesEachWithAWallpaper() {
+        assertEquals(15, Themes.all.size)
+        assertTrue(Wallpapers.covers(Themes.all.map { it.key }))
         assertEquals(Themes.all.size, Themes.all.map { it.key }.toSet().size)
         assertEquals(Themes.all.size, Themes.all.map { Triple(it.bg, it.accent, it.text) }.toSet().size)
     }
