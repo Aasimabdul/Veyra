@@ -132,13 +132,15 @@ class MainActivity : AppCompatActivity() {
             .antiTracking(antiTrackingFlags())
             .cookieBehavior(cookieBehavior())
             .build()
-        runtime = GeckoRuntime.create(
-            this,
+        // GeckoView permits only one GeckoRuntime per app process. Reuse it when
+        // Android recreates MainActivity (for example, after the emulator smoke test backgrounds it).
+        runtime = sharedRuntime ?: GeckoRuntime.create(
+            applicationContext,
             GeckoRuntimeSettings.Builder()
                 .contentBlocking(contentBlockingSettings)
                 .javaScriptEnabled(javascriptEnabled)
                 .build()
-        )
+        ).also { sharedRuntime = it }
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
         geckoView = GeckoView(this)
         downloads = DownloadCenter(this) {
