@@ -663,7 +663,11 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         val array = JSONArray()
         items.filter { (!it.isPrivate || it.privateFolder) && it.state != DlState.RUNNING }.forEach { item ->
             array.put(JSONObject().apply {
-                put("id", item.id); put("url", item.url); put("name", item.name)
+                put("id", item.id)
+                // Do not persist the origin URL for private-browsing downloads, even when the
+                // user explicitly saves the resulting file into the private folder.
+                put("url", if (item.isPrivate) "" else item.url)
+                put("name", item.name)
                 put("mime", item.mime ?: ""); put("total", item.total); put("done", item.done)
                 put("state", item.state.name); put("error", item.error ?: "")
                 put("uri", item.savedUri ?: ""); put("resumable", item.resumable); put("pf", item.privateFolder)
