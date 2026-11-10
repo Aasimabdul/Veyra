@@ -661,7 +661,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
 
     private fun persist() {
         val array = JSONArray()
-        items.filter { (!it.isPrivate || it.privateFolder) && it.state != DlState.RUNNING }.forEach { item ->
+        items.filter { (!it.isPrivate || it.inPrivateFolder) && it.state != DlState.RUNNING }.forEach { item ->
             array.put(JSONObject().apply {
                 put("id", item.id)
                 // Do not persist the origin URL for private-browsing downloads, even when the
