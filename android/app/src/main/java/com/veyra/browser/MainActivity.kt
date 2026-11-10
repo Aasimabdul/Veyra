@@ -26,6 +26,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONArray
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
@@ -78,6 +79,9 @@ class MainActivity : AppCompatActivity() {
     private var forwardButton: View? = null
     private var progressFill: View? = null
     private var currentPage = "home"
+    private var websiteFullscreen = false
+    private var fullscreenPreviousBottomVisibility = View.VISIBLE
+    private var fullscreenPreviousActionVisibility = View.VISIBLE
     private val screenBackStack = java.util.ArrayDeque<String>()
     private var restoringScreen = false
     private val currentUrl: String get() = cur?.url ?: ""
@@ -236,7 +240,7 @@ class MainActivity : AppCompatActivity() {
             applyGutters()
             bottomBar?.let { bar ->
                 bar.animate().cancel()
-                bar.visibility = if (keyboardVisible && currentPage == "browse") View.GONE else View.VISIBLE
+                bar.visibility = if (websiteFullscreen || (keyboardVisible && currentPage == "browse")) View.GONE else View.VISIBLE
                 bar.alpha = 1f
                 bar.translationY = 0f
             }
@@ -312,6 +316,7 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() {
         when {
             currentPage == "lock" -> super.onBackPressed()
+            websiteFullscreen -> cur?.session?.exitFullScreen()
             currentPage == "browse" && canGoBack -> cur?.session?.goBack()
             currentPage == "browse" -> show("home")
             screenBackStack.isNotEmpty() -> {
@@ -402,12 +407,12 @@ class MainActivity : AppCompatActivity() {
         val width = resources.displayMetrics.widthPixels
         val gutter = maxOf(dp(24), (width - dp(640)) / 2)
         val contentGutter = if (currentPage == "browse") 0 else gutter
-        val contentTop = if (currentPage == "browse") 0 else dp(16)
+        val contentTop = if (websiteFullscreen || currentPage == "browse") 0 else dp(16)
         root.setPadding(
             systemInsetLeft + contentGutter,
-            systemInsetTop + contentTop,
+            if (websiteFullscreen) 0 else systemInsetTop + contentTop,
             systemInsetRight + contentGutter,
-            maxOf(systemInsetBottom, imeInsetBottom)
+            if (websiteFullscreen) 0 else maxOf(systemInsetBottom, imeInsetBottom)
         )
     }
 
@@ -733,6 +738,27 @@ class MainActivity : AppCompatActivity() {
         browserActionRow = actions
 
         attachBottomBar(capsule, matchWidth = true)
+    }
+
+    private fun setWebsiteFullscreen(enabled: Boolean) {
+        if (websiteFullscreen == enabled) return
+        websiteFullscreen = enabled
+        if (enabled) {
+            fullscreenPreviousBottomVisibility = bottomBar?.visibility ?: View.VISIBLE
+            fullscreenPreviousActionVisibility = browserActionRow?.visibility ?: View.VISIBLE
+            bottomBar?.visibility = View.GONE
+            browserActionRow?.visibility = View.GONE
+            root.setPadding(systemInsetLeft, 0, systemInsetRight, 0)
+            WindowInsetsControllerCompat(window, window.decorView).apply {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
+        } else {
+            WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+            bottomBar?.visibility = fullscreenPreviousBottomVisibility
+            browserActionRow?.visibility = fullscreenPreviousActionVisibility
+            applyGutters()
+        }
     }
 
     private fun setDockCollapsed(collapsed: Boolean) {
@@ -1102,6 +1128,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
         session.contentDelegate = object : GeckoSession.ContentDelegate {
+            override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+                if (tab !== cur) return
+                setWebsiteFullscreen(fullScreen)
+            }
+
             override fun onExternalResponse(session: GeckoSession, response: org.mozilla.geckoview.WebResponse) {
                 startDownload(response, tab.isPrivate)
             }
