@@ -120,6 +120,17 @@ class VpnManager private constructor(context: Context) {
         val summary = VpnConfigSummary.of(trimmed)
         val endpoint = summary.endpoints.firstOrNull().orEmpty()
         val records = storedProfiles().toMutableList()
+        val activeIdBeforeSave = profilePrefs.getString("active_profile_id", "").orEmpty()
+        // Preserve the old single-config install before the first named profile replaces it.
+        if (file.isFile && (activeIdBeforeSave.isBlank() || records.none { it.id == activeIdBeforeSave })) {
+            val previousText = configText()
+            if (!previousText.isNullOrBlank()) {
+                val previousEndpoint = VpnConfigSummary.of(previousText).endpoints.firstOrNull().orEmpty()
+                val previousId = "profile_legacy_${System.currentTimeMillis()}"
+                File(profilesDir, "$previousId.enc").writeBytes(encryptConfig(previousText))
+                records.add(ProfileRecord(previousId, "Previous imported profile", previousEndpoint))
+            }
+        }
         val slug = name.lowercase().replace(Regex("[^a-z0-9_-]+"), "-").trim('-').take(24).ifBlank { "server" }
         var id = "profile_${System.currentTimeMillis()}_$slug"
         var suffix = 1
