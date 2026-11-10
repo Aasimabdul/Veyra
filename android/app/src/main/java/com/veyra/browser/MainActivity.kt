@@ -2010,13 +2010,16 @@ class MainActivity : AppCompatActivity() {
                 neu(this, 26, Depth.FIELD, inset = true)
             }
             sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(20) })
-            fun go(toPrivateFolder: Boolean) {
+            fun resolvedUrl(): String? {
                 val raw = input.text.toString().trim()
-                val url = when {
+                return when {
                     DownloadNaming.isHttpUrl(raw) -> raw
                     raw.contains('.') && !raw.contains(' ') -> "https://$raw"
                     else -> null
                 }
+            }
+            fun go(toPrivateFolder: Boolean) {
+                val url = resolvedUrl()
                 if (url == null) {
                     Toast.makeText(this, "Paste a valid http(s) link", Toast.LENGTH_SHORT).show()
                     return
@@ -2026,23 +2029,52 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "This site uses protected streams that Veyra cannot download.", Toast.LENGTH_LONG).show()
                     return
                 }
-                dialog.dismiss()
                 val kind = MediaDetect.kindFromExtension(url)
                 if (kind == DetectedMedia.Kind.STREAM) {
+                    dialog.dismiss()
                     Toast.makeText(this, "Streams can be played but not saved as one file.", Toast.LENGTH_LONG).show()
                     playMedia(Uri.parse(url), null)
                 } else if (kind != null || DownloadNaming.looksLikeDirectFile(url)) {
+                    dialog.dismiss()
                     startUrlDownload(url, cur?.isPrivate == true, toPrivateFolder)
+                } else if (toPrivateFolder) {
+                    Toast.makeText(this, "This is a webpage, not a direct file. Open it first, then choose Media on this page → Private.", Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(this, "Opening the page. Use the menu, Media on this page, to save a video.", Toast.LENGTH_LONG).show()
+                    dialog.dismiss()
+                    Toast.makeText(this, "Opening the page. Use Media on this page for supported videos.", Toast.LENGTH_LONG).show()
                     navigate(url)
                 }
             }
-            val actions = row().apply { gravity = Gravity.END }
-            actions.addView(textButton("Cancel") { dialog.dismiss() })
-            actions.addView(textButton("Private") { go(true) }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
-            actions.addView(textButton("Download", primary = true) { go(false) }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
-            sheet.addView(actions, matchWrap())
+            val playRow = row().apply { gravity = Gravity.CENTER }
+            playRow.addView(textButton("Play / Stream") {
+                val url = resolvedUrl()
+                if (url == null) {
+                    Toast.makeText(this, "Paste a valid http(s) link", Toast.LENGTH_SHORT).show()
+                    return@textButton
+                }
+                val host = hostOf(url).lowercase()
+                if (streamingHosts.any { host == it || host.endsWith(".$it") }) {
+                    Toast.makeText(this, "This protected website must use its original player.", Toast.LENGTH_LONG).show()
+                    return@textButton
+                }
+                if (MediaDetect.kindFromExtension(url) == null) {
+                    Toast.makeText(this, "Only direct media links can be played here. For a webpage, open it in Veyra first.", Toast.LENGTH_LONG).show()
+                    return@textButton
+                }
+                dialog.dismiss()
+                playMedia(Uri.parse(url), null)
+            }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            playRow.addView(textButton("Download", primary = true) { go(false) },
+                lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+            sheet.addView(playRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            val secondaryActions = row().apply { gravity = Gravity.END }
+            secondaryActions.addView(textButton("Cancel") { dialog.dismiss() },
+                lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            secondaryActions.addView(textButton("Private") { go(true) },
+                lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+            sheet.addView(secondaryActions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(10)
+            })
         }
     }
 
