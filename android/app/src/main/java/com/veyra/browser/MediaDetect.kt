@@ -30,7 +30,7 @@ data class DetectedMedia(
         }
 
     companion object {
-        private val QUALITY_PATTERN = Regex("""(?i)\\b(2160|1440|1080|720|540|480|360|240)p?\\b|\\b4k\\b""")
+        private val QUALITY_PATTERN = Regex("""(?i)\b(2160|1440|1080|720|540|480|360|240)p?\b|\b4k\b""")
     }
 }
 
