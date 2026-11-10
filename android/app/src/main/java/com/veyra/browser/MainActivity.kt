@@ -1359,12 +1359,18 @@ class MainActivity : AppCompatActivity() {
         resetContent("bookmarks")
         val page = scrollPage()
         val add = iconButton(Icons.PLUS, "Bookmark current page", Palette.ACCENT) {
-            if (currentUrl.isNotBlank()) {
-                bookmarks.add(currentUrl)
-                persistBookmarks()
-                Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
-                showBookmarks()
-            } else Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
+            when {
+                cur?.isPrivate == true -> Toast.makeText(
+                    this, "Bookmarks are disabled in private tabs so this page is not saved.", Toast.LENGTH_LONG
+                ).show()
+                currentUrl.isNotBlank() -> {
+                    bookmarks.add(currentUrl)
+                    persistBookmarks()
+                    Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                    showBookmarks()
+                }
+                else -> Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
+            }
         }
         val header = row().apply { minimumHeight = dp(48) }
         header.addView(label("Bookmarks", 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
