@@ -75,7 +75,10 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
 
     private fun changedNow() { main.post { onChange() } }
 
-    fun takenNames(): Set<String> = items.map { it.name }.toSet()
+    fun takenNames(): Set<String> =
+        (items.map { it.name } +
+            (privateDir(context).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()) +
+            (publicDir().listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
 
     /** Handles a response Gecko could not render (attachment, archive, binary...). */
     fun enqueue(response: WebResponse, isPrivate: Boolean) {
@@ -516,13 +519,25 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         // discover them. This is app-sandbox privacy, not encrypted vault storage.
         if (item.inPrivateFolder) {
             val dir = privateDir(context).apply { mkdirs() }
+            val occupied = (items.filter { it !== item && it.inPrivateFolder }.map { it.name } +
+                (dir.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
+            item.name = DownloadNaming.uniqueName(item.name, occupied)
             val target = File(dir, item.name)
-            source.copyTo(target, overwrite = true)
+            if (target.exists()) throw java.io.IOException("A private file with that name already exists")
+            source.copyTo(target, overwrite = false)
             return FileProvider.getUriForFile(context, "${context.packageName}.files", target)
         }
 
         if (Build.VERSION.SDK_INT >= 29) {
             val resolver = context.contentResolver
+            val occupied = (items.filter { it !== item }.map { it.name } +
+                (publicDir().listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()) +
+                (privateDir(context).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
+            var candidate = DownloadNaming.uniqueName(item.name, occupied)
+            while (contentUriNameExists(candidate)) {
+                candidate = DownloadNaming.uniqueName(candidate, occupied + candidate)
+            }
+            item.name = candidate
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, item.name)
                 put(MediaStore.Downloads.MIME_TYPE, mime)
@@ -531,16 +546,28 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             }
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw java.io.IOException("Downloads folder is unavailable")
-            resolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } }
-                ?: throw java.io.IOException("Cannot write to Downloads")
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            return uri
+            try {
+                resolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } }
+                    ?: throw java.io.IOException("Cannot write to Downloads")
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                if (resolver.update(uri, values, null, null) <= 0) {
+                    throw java.io.IOException("Could not publish the saved download")
+                }
+                return uri
+            } catch (e: Exception) {
+                runCatching { resolver.delete(uri, null, null) }
+                throw e
+            }
         }
-        val dir = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra").apply { mkdirs() }
+        val dir = publicDir().apply { mkdirs() }
+        val occupied = (items.filter { it !== item }.map { it.name } +
+            (dir.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()) +
+            (privateDir(context).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
+        item.name = DownloadNaming.uniqueName(item.name, occupied)
         val target = File(dir, item.name)
-        source.copyTo(target, overwrite = true)
+        if (target.exists()) throw java.io.IOException("A file with that name already exists")
+        source.copyTo(target, overwrite = false)
         return FileProvider.getUriForFile(context, "${context.packageName}.files", target)
     }
 
