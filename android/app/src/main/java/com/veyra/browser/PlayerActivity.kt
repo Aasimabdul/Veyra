@@ -227,7 +227,10 @@ class PlayerActivity : AppCompatActivity() {
         val exo = ExoPlayer.Builder(this).build()
         player = exo
         playerView.player = exo
-        exo.setMediaItem(MediaItem.fromUri(uri))
+        val mediaItem = MediaItem.Builder().setUri(uri).apply {
+            intent?.getStringExtra("mime_type")?.trim()?.takeIf { it.isNotEmpty() }?.let { setMimeType(it) }
+        }.build()
+        exo.setMediaItem(mediaItem)
         exo.playbackParameters = exo.playbackParameters.withSpeed(speeds[speedIndex])
         val saved = prefs().getLong("pos:$uri", 0L)
         if (saved > 0) exo.seekTo(saved)
