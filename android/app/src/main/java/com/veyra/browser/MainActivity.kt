@@ -205,7 +205,10 @@ class MainActivity : AppCompatActivity() {
         ).also { sharedRuntime = it }
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
         installMediaScanner()
-        geckoView = GeckoView(this)
+        geckoView = GeckoView(this).apply {
+            // Avoid a black flash while Gecko initializes or when a page paints a transparent root.
+            setBackgroundColor(Palette.BG)
+        }
         downloads = DownloadCenter(this) {
             if (currentPage == "downloads") refreshDownloads()
             else if (currentPage == "pfolder") showPrivateFolder()
@@ -2516,8 +2519,8 @@ class MainActivity : AppCompatActivity() {
             neu(this, 22, Depth.CARD)
             addView(label("About the free VPN", 15f, Palette.TEXT, 1))
             addView(label(
-                "The free VPN uses Cloudflare WARP. It encrypts your traffic and hides it from your Wi-Fi or mobile network, but it does not let you choose a country or change your location. " +
-                    "It is set up through Cloudflare's unofficial consumer API, so it can stop working on some networks. For a specific country, import a WireGuard profile from a provider that offers one.",
+                "Cloudflare WARP is free and encrypts traffic, but it does not provide a US/Netherlands location selector. Veyra does not operate its own free VPN servers. " +
+                    "To connect through a US or Netherlands server, import a valid WireGuard profile from a provider that offers that location. The one-tap WARP setup relies on an unofficial consumer API and may stop working.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) })
         }
@@ -2576,8 +2579,8 @@ class MainActivity : AppCompatActivity() {
             }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
         }
         page.addView(label(
-            "Uses the WireGuard engine. Your provider sees the traffic that leaves the tunnel, so pick one you trust. " +
-                "Not implemented: server list, kill switch and per-app split tunnelling.",
+            "Uses WireGuard. Your provider can see traffic leaving the tunnel, so choose one you trust. US/Netherlands selection requires a profile from that location. " +
+                "Not implemented: automatic free-server directory, kill switch and per-app split tunnelling.",
             12f, Palette.MUTED
         ).apply { setLineSpacing(0f, 1.2f); setPadding(dp(4), 0, dp(4), 0) }, matchWrap())
         addMainNav("settings")
