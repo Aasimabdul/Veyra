@@ -320,6 +320,13 @@ class MainActivity : AppCompatActivity() {
                 currentPage == "lock" -> passBackToSystem()
                 websiteFullscreen -> cur?.session?.exitFullScreen()
                 currentPage == "browse" && canGoBack -> cur?.session?.goBack()
+                // Browser may be the visible child of Settings/Downloads/VPN. Restore that
+                // screen before treating Back as an exit to Home.
+                currentPage == "browse" && screenBackStack.isNotEmpty() -> {
+                    val destination = screenBackStack.removeLast()
+                    restoringScreen = true
+                    try { show(destination) } finally { restoringScreen = false }
+                }
                 currentPage == "browse" -> show("home")
                 screenBackStack.isNotEmpty() -> {
                     val destination = screenBackStack.removeLast()
@@ -1422,11 +1429,12 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString("history", array.toString()).apply()
     }
 
-    private fun playMedia(uri: Uri, name: String?) {
+    private fun playMedia(uri: Uri, name: String?, mimeType: String? = null) {
         startActivity(Intent(this, PlayerActivity::class.java).apply {
             data = uri
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             putExtra("name", name)
+            if (!mimeType.isNullOrBlank()) putExtra("mime_type", mimeType)
         })
     }
 
@@ -2420,7 +2428,7 @@ class MainActivity : AppCompatActivity() {
         showSheet { sheet, dialog ->
             sheet.addView(label("Media on this page", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Direct files can be played or saved. Streams can only be played.",
+                "Direct files can be played or saved. HLS/DASH streams may play when the source permits it; protected website video must stay in its original player.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
             val list = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
@@ -2457,7 +2465,7 @@ class MainActivity : AppCompatActivity() {
                 })
                 val actions = row()
                 actions.addView(textButton("Play", primary = true) {
-                    dialog.dismiss(); playMedia(Uri.parse(media.url), media.title)
+                    dialog.dismiss(); playMedia(Uri.parse(media.url), media.title, media.mimeType)
                 }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 if (media.downloadable) {
                     actions.addView(textButton("Save") {
@@ -2483,8 +2491,7 @@ class MainActivity : AppCompatActivity() {
             ))
             if (tab.unsupportedMedia > 0) {
                 sheet.addView(label(
-                    "${tab.unsupportedMedia} protected or segmented stream(s) on this page cannot be saved by Veyra " +
-                        "(for example blob, DRM or DASH video).",
+                    "${tab.unsupportedMedia} browser-managed media source(s) are not ordinary files. Veyra will not extract DRM-protected streams; use the website's own player for those sources.",
                     12f, Palette.MUTED
                 ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(10), 0, 0) }, matchWrap())
             }
