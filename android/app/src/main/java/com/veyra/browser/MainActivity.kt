@@ -1774,9 +1774,9 @@ class MainActivity : AppCompatActivity() {
             if (item.state == DlState.DONE) {
                 action("Open / Play", "Open the saved file") { openDownload(item) }
                 action("Share", "Share using a temporary content URI") { shareDownload(item) }
-                action("Rename", "Keep the filename safe and unique") {
-                    if (item.inPrivateFolder) showRenamePrivateFileSheet(java.io.File(DownloadCenter.privateDir(this), item.name))
-                    else showRenameDownloadSheet(item)
+                action("Rename", "Keep the filename safe and unique", Icons.FILE) {
+                    // The DownloadCenter updates its persisted record and FileProvider URI too.
+                    showRenameDownloadSheet(item)
                 }
                 if (!item.inPrivateFolder && !item.isPrivate) {
                     action("Move to Private Folder", "Hide the file from public Downloads") {
@@ -2174,7 +2174,7 @@ class MainActivity : AppCompatActivity() {
             }
             action("Open / Play", "Open with Veyra or another app", Icons.PLAY) { openPrivateFile(file) }
             action("Share", "Share only after choosing a destination", Icons.SHARE) { sharePrivateFile(file) }
-            action("Rename", "Rename without overwriting another private file", Icons.EDIT) { showRenamePrivateFileSheet(file) }
+            action("Rename", "Rename without overwriting another private file", Icons.FILE) { showRenamePrivateFileSheet(file) }
             action("Move out of Private Folder", "Copy to Downloads, then remove the private copy", Icons.DOWNLOAD) {
                 val moved = movePrivateFileOut(file)
                 Toast.makeText(this, if (moved) "Moved to Downloads" else "Could not safely move this file", Toast.LENGTH_LONG).show()
