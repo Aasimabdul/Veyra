@@ -2565,13 +2565,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupFreeVpn() {
-        Toast.makeText(this, "Trying experimental WARP setup…", Toast.LENGTH_SHORT).show()
-        VpnManager.get(this).provisionFree { error ->
-            if (error == null) startVpn() else Toast.makeText(this, error, Toast.LENGTH_LONG).show()
-        }
-    }
-
     private fun startVpn() {
         val vpn = VpnManager.get(this)
         val intent = try { vpn.permissionIntent() } catch (_: Exception) { null }
@@ -2593,13 +2586,96 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveVpnConfig(text: String) {
-        try {
-            VpnManager.get(this).saveConfig(text)
-            Toast.makeText(this, "VPN config saved (encrypted)", Toast.LENGTH_SHORT).show()
-        } catch (e: IllegalArgumentException) {
-            Toast.makeText(this, e.message ?: "Invalid config", Toast.LENGTH_LONG).show()
+        showSaveVpnProfileSheet(text)
+    }
+
+    private fun showSaveVpnProfileSheet(configText: String) {
+        val endpoint = VpnConfigSummary.of(configText).endpoints.firstOrNull().orEmpty()
+        val host = endpoint.substringBefore(':').lowercase()
+        val suggestedName = when {
+            Regex("""(^|[.-])(us|usa|unitedstates)([.-]|$)""").containsMatchIn(host) -> "United States"
+            Regex("""(^|[.-])(nl|nld|netherlands)([.-]|$)""").containsMatchIn(host) -> "Netherlands"
+            host.isNotBlank() -> host.take(36)
+            else -> "WireGuard server"
         }
-        if (currentPage == "vpn") showVpn()
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Save VPN server profile", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "Name this imported server (for example United States or Netherlands). The endpoint and private key stay in app storage; the config is encrypted with Android Keystore.",
+                13f, Palette.MUTED
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
+            val nameInput = EditText(this).apply {
+                setText(suggestedName)
+                setSingleLine(true)
+                setTextColor(Palette.TEXT)
+                setHintTextColor(Palette.MUTED)
+                textSize = 15f
+                setPadding(dp(18), 0, dp(18), 0)
+                neu(this, 24, Depth.FIELD, inset = true)
+            }
+            sheet.addView(nameInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(18) })
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Cancel") { dialog.dismiss() })
+            actions.addView(textButton("Save profile", primary = true) {
+                try {
+                    val profile = VpnManager.get(this).saveProfile(configText, nameInput.text.toString())
+                    dialog.dismiss()
+                    Toast.makeText(
+                        this,
+                        if (profile.active) "Profile saved and selected: ${profile.name}"
+                        else "Profile saved. Disconnect the active VPN before switching to it.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    if (currentPage == "vpn") showVpn()
+                } catch (e: Exception) {
+                    Toast.makeText(this, e.message ?: "Could not save this WireGuard profile", Toast.LENGTH_LONG).show()
+                }
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+            sheet.addView(actions, matchWrap())
+        }
+    }
+
+    private fun showFreeVpnProvidersSheet() {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Free VPN server profiles", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "Veyra does not own VPN servers and cannot generate valid server credentials. To connect to the US, Netherlands or another country, use a provider that offers that location on its free plan, download a WireGuard profile if the provider permits it, then import it here. Veyra will not fake a country or mark a tunnel connected without a real WireGuard tunnel.",
+                13f, Palette.MUTED
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
+            sheet.addView(
+                listRow(
+                    well(icon(Icons.SHIELD, Palette.ACCENT, 20)),
+                    "Proton VPN",
+                    "Official free-plan information and WireGuard configuration options",
+                    icon(Icons.CHEVRON, Palette.MUTED, 18)
+                ) {
+                    dialog.dismiss()
+                    openExternalPage("https://account.protonvpn.com/downloads#wireguard-config")
+                },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+            )
+            sheet.addView(
+                listRow(
+                    well(icon(Icons.INFO, Palette.ACCENT, 20)),
+                    "WireGuard profile guide",
+                    "How to generate and download a configuration",
+                    icon(Icons.CHEVRON, Palette.MUTED, 18)
+                ) {
+                    dialog.dismiss()
+                    openExternalPage("https://protonvpn.com/support/wireguard-configurations")
+                },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
+            )
+            sheet.addView(label(
+                "Free-server countries, country choice and manual profile downloads depend on the provider's current plan rules. A provider login may be required. Profiles you import will appear in Veyra's saved server list.",
+                12f, Palette.MUTED
+            ).apply { setLineSpacing(0f, 1.2f) }, matchWrap())
+        }
+    }
+
+    private fun openExternalPage(url: String) {
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        catch (_: Exception) { Toast.makeText(this, "Could not open the provider page", Toast.LENGTH_SHORT).show() }
     }
 
     private fun showVpn() {
@@ -2656,7 +2732,7 @@ class MainActivity : AppCompatActivity() {
 
         if (!vpn.hasConfig() && status != VpnManager.Status.CONNECTING) {
             page.addView(
-                textButton("Turn on free VPN", primary = true) { setupFreeVpn() },
+                textButton("Find free VPN profiles", primary = true) { showFreeVpnProvidersSheet() },
                 lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
             )
         }
@@ -2664,13 +2740,52 @@ class MainActivity : AppCompatActivity() {
         val countryNote = column().apply {
             setPadding(dp(18), dp(16), dp(18), dp(16))
             neu(this, 22, Depth.CARD)
-            addView(label("About the experimental free VPN", 15f, Palette.TEXT, 1))
+            addView(label("Use a real provider profile", 15f, Palette.TEXT, 1))
             addView(label(
-                "The one-tap option attempts to provision Cloudflare WARP using an unofficial, undocumented consumer API. It may stop working or fail on some networks, and Veyra cannot guarantee this provider interface. It does not let you choose a country. For a more predictable setup, import a WireGuard profile from a provider or your own server.",
+                "Cloudflare WARP does not let Veyra choose a country, and its consumer provisioning interface is not a supported integration. Veyra therefore uses imported WireGuard profiles for real country-specific servers. Use a profile supplied by a provider you trust and check its free-plan country limits.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) })
         }
         page.addView(countryNote, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
+
+        val profiles = vpn.profiles()
+        if (profiles.isNotEmpty()) {
+            page.addView(label("SAVED SERVER PROFILES", 11f, Palette.MUTED, 1).apply {
+                letterSpacing = 0.12f
+                setPadding(dp(4), dp(4), 0, dp(10))
+            }, matchWrap())
+            profiles.forEach { profile ->
+                val detail = buildString {
+                    if (profile.active) append("Active profile · ")
+                    append(profile.endpoint.ifBlank { "WireGuard endpoint not available" })
+                }
+                page.addView(
+                    listRow(
+                        well(icon(if (profile.active) Icons.SHIELD else Icons.SHIELD_OFF,
+                            if (profile.active) Palette.ACCENT else Palette.MUTED, 20)),
+                        profile.name,
+                        detail,
+                        icon(if (profile.active) Icons.SHIELD else Icons.CHEVRON, Palette.ACCENT, 18)
+                    ) {
+                        if (profile.active) return@listRow
+                        if (vpn.status == VpnManager.Status.ON || vpn.status == VpnManager.Status.CONNECTING ||
+                            vpn.status == VpnManager.Status.DISCONNECTING) {
+                            Toast.makeText(this, "Disconnect the current tunnel before switching servers", Toast.LENGTH_LONG).show()
+                        } else try {
+                            vpn.selectProfile(profile.id)
+                            Toast.makeText(this, "Selected ${profile.name}", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(this, e.message ?: "Could not select this server", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+                )
+            }
+            page.addView(label(
+                "Tap a saved profile to select it. Disconnect first before switching servers. Profiles are encrypted locally; Veyra connects only to the endpoints in the imported config.",
+                12f, Palette.MUTED
+            ).apply { setPadding(dp(4), dp(2), dp(4), dp(14)); setLineSpacing(0f, 1.2f) }, matchWrap())
+        }
 
         if (vpn.hasConfig()) {
             val busy = status == VpnManager.Status.CONNECTING || status == VpnManager.Status.DISCONNECTING
@@ -2709,7 +2824,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val actions = row()
-        actions.addView(textButton(if (vpn.hasConfig()) "Replace file" else "Import file", primary = !vpn.hasConfig()) {
+        actions.addView(textButton(if (vpn.hasConfig()) "Import another profile" else "Import WireGuard profile", primary = !vpn.hasConfig()) {
             vpnImport.launch(arrayOf("*/*"))
         }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         actions.addView(textButton("Paste") {
@@ -2720,10 +2835,19 @@ class MainActivity : AppCompatActivity() {
         }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(14) })
         page.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
         if (vpn.hasConfig()) {
-            page.addView(textButton("Remove config") {
-                showConfirmSheet("Remove VPN config?", "The saved WireGuard config is deleted from this device.", "Remove") {
-                    vpn.deleteConfig()
-                    show("vpn")
+            page.addView(textButton("Remove active profile") {
+                val active = vpn.profiles().firstOrNull { it.active }
+                showConfirmSheet(
+                    "Remove active VPN profile?",
+                    "The encrypted active config will be removed. Other saved profiles remain available.",
+                    "Remove"
+                ) {
+                    try {
+                        if (active != null) vpn.deleteProfile(active.id) else vpn.deleteConfig()
+                        show("vpn")
+                    } catch (e: Exception) {
+                        Toast.makeText(this, e.message ?: "Disconnect the VPN before removing it", Toast.LENGTH_LONG).show()
+                    }
                 }
             }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
         }
