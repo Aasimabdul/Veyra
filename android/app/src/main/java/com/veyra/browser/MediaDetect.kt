@@ -4,7 +4,7 @@ import org.json.JSONObject
 import java.util.Locale
 
 /** One playable / downloadable media file found on a web page. */
-data class DetectedMedia(val url: String, val kind: Kind, val title: String) {
+data class DetectedMedia(val url: String, val kind: Kind, val title: String, val mimeType: String? = null) {
     enum class Kind { VIDEO, AUDIO, STREAM }
 
     /** Streams (HLS playlists) can be played but not saved as a single file. */
@@ -14,9 +14,10 @@ data class DetectedMedia(val url: String, val kind: Kind, val title: String) {
 }
 
 /**
- * Parses the reports sent by the built-in page scanner (assets/veyra_media). Only plain http(s)
- * URLs are kept. blob: / MediaSource streams, DASH manifests and DRM content cannot be saved or
- * played outside the page, so they are only counted and shown to the user as unsupported.
+ * Parses reports from the built-in page scanner. Only plain HTTP(S) URLs are kept.
+ * Direct media files are candidates for native playback/download; HLS/DASH manifests are
+ * play-only candidates. blob:/MediaSource URLs cannot be handed to ExoPlayer as ordinary URLs
+ * and remain counted as unsupported. DRM and source access rules are never bypassed.
  */
 object MediaDetect {
     data class Result(val items: List<DetectedMedia>, val unsupported: Int)
@@ -39,6 +40,17 @@ object MediaDetect {
         else -> null
     }
 
+    /** HTTP/source MIME identifies extensionless media where a URL alone does not. */
+    fun kindFromMime(rawMime: String): DetectedMedia.Kind? = when (rawMime.substringBefore(';').trim().lowercase(Locale.ROOT)) {
+        "application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl",
+        "application/dash+xml" -> DetectedMedia.Kind.STREAM
+        "audio/mpeg", "audio/mp4", "audio/aac", "audio/ogg", "audio/opus",
+        "audio/wav", "audio/x-wav", "audio/flac", "audio/webm" -> DetectedMedia.Kind.AUDIO
+        "video/mp4", "video/webm", "video/quicktime", "video/3gpp",
+        "video/x-matroska", "video/ogg" -> DetectedMedia.Kind.VIDEO
+        else -> null
+    }
+
     fun parse(json: String): Result {
         val root = try { JSONObject(json) } catch (_: Exception) { return Result(emptyList(), 0) }
         var unsupported = root.optInt("blobs", 0).coerceAtLeast(0)
@@ -53,13 +65,15 @@ object MediaDetect {
                     continue
                 }
                 val tag = o.optString("tag")
-                val kind = kindFromExtension(url) ?: when (tag) {
+                // An explicit extension wins, then MIME metadata, then the DOM element's tag.
+                val rawMime = o.optString("mime").trim().ifBlank { null }
+                val kind = kindFromExtension(url) ?: rawMime?.let(::kindFromMime) ?: when (tag) {
                     "video" -> DetectedMedia.Kind.VIDEO
                     "audio" -> DetectedMedia.Kind.AUDIO
                     else -> null
                 } ?: continue
                 if (found.size >= MAX_ITEMS && url !in found) continue
-                found.putIfAbsent(url, DetectedMedia(url, kind, o.optString("title").trim().take(120)))
+                found.putIfAbsent(url, DetectedMedia(url, kind, o.optString("title").trim().take(120), rawMime))
             }
         }
         return Result(found.values.toList(), unsupported)
