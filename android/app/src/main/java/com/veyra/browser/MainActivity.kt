@@ -2182,6 +2182,18 @@ class MainActivity : AppCompatActivity() {
                     }
                 }.start()
             }, matchWrap())
+            if (item.inPrivateFolder && !item.isPrivate) sheet.addView(sheetAction(Icons.DOWNLOAD, "Move out of private folder") {
+                dialog.dismiss()
+                Thread {
+                    val file = java.io.File(DownloadCenter.privateDir(this), item.name)
+                    val ok = downloads.moveOutOfPrivate(file)
+                    runOnUiThread {
+                        Toast.makeText(this, if (ok) "Moved to Downloads/Veyra" else "Could not move this file", Toast.LENGTH_SHORT).show()
+                        if (currentPage == "pfolder") showPrivateFolder()
+                        else if (currentPage == "downloads") refreshDownloads()
+                    }
+                }.start()
+            }, matchWrap())
             sheet.addView(sheetAction(Icons.INFO, "File details") {
                 dialog.dismiss()
                 showDownloadDetails(item)
