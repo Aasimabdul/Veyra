@@ -2170,16 +2170,86 @@ class MainActivity : AppCompatActivity() {
         "spotify.com", "disneyplus.com", "sonyliv.com", "zee5.com"
     )
 
-    /** "Paste a link, then download": direct files download; web pages open so videos can be detected. */
+    private data class LinkInspection(
+        val statusCode: Int,
+        val mimeType: String?,
+        val contentLength: Long,
+        val finalUrl: String,
+        val error: String? = null
+    )
+
+    /** Inspect metadata in the background without reading the full media body into memory. */
+    private fun inspectLink(url: String): LinkInspection {
+        var connection: java.net.HttpURLConnection? = null
+        try {
+            connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                connectTimeout = 10_000
+                readTimeout = 12_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Veyra")
+                setRequestProperty("Accept", "*/*")
+            }
+            var status = connection.responseCode
+            var mime = connection.contentType?.substringBefore(';')?.trim()
+            var length = connection.contentLengthLong
+            var finalUrl = connection.url.toString()
+            val unsupportedRedirect = !DownloadNaming.isHttpUrl(finalUrl)
+            if (unsupportedRedirect) {
+                return LinkInspection(status, mime, length, finalUrl, "This link redirects to an unsupported URL type.")
+            }
+            val finalHost = hostOf(finalUrl).lowercase()
+            if (streamingHosts.any { finalHost == it || finalHost.endsWith(".$it") }) {
+                return LinkInspection(status, mime, length, finalUrl, "This website must use its original player. Veyra will not extract protected streams.")
+            }
+
+            // Some legitimate file servers reject HEAD or omit its metadata. Probe one byte only.
+            val needsProbe = status == 405 || status == 501 || (status in 200..299 && mime.isNullOrBlank())
+            connection.disconnect()
+            connection = null
+            if (needsProbe) {
+                connection = (java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 10_000
+                    readTimeout = 12_000
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "Veyra")
+                    setRequestProperty("Accept", "*/*")
+                    setRequestProperty("Range", "bytes=0-0")
+                }
+                status = connection.responseCode
+                mime = connection.contentType?.substringBefore(';')?.trim()
+                val rangeTotal = connection.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                length = rangeTotal ?: connection.contentLengthLong
+                finalUrl = connection.url.toString()
+                if (status in 200..299) {
+                    // Never consume the whole response if a server ignores Range.
+                    runCatching { connection.inputStream.use { it.read() } }
+                }
+            }
+            if (!DownloadNaming.isHttpUrl(finalUrl)) {
+                return LinkInspection(status, mime, length, finalUrl, "This link redirects to an unsupported URL type.")
+            }
+            if (status !in 200..299) {
+                return LinkInspection(status, mime, length, finalUrl, "The server replied with HTTP $status. The link may have expired or require sign-in.")
+            }
+            return LinkInspection(status, mime, length, finalUrl)
+        } catch (_: Exception) {
+            return LinkInspection(-1, null, -1, url, "Could not inspect this link. Check the connection and the URL.")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    /** Classify pasted links after redirects and HTTP metadata have been checked. */
     private fun showLinkDownloadSheet() {
         showSheet { sheet, dialog ->
             sheet.addView(label("Download from a link", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Paste a direct link to a video, audio or file (mp4, webm, mp3, zip...). For a web page, Veyra opens it and " +
-                    "lists the videos it can find under Media on this page. Protected streaming sites such as YouTube and " +
-                    "Netflix cannot be downloaded.",
+                "Paste a direct video, audio or file link. Veyra checks the response before choosing an action. " +
+                    "Ordinary webpages open in the browser; protected streaming services must use their own player.",
                 13f, Palette.MUTED
-            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(16)) }, matchWrap())
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(12)) }, matchWrap())
             val input = EditText(this).apply {
                 hint = "https://"
                 setHintTextColor(Palette.MUTED)
@@ -2190,42 +2260,144 @@ class MainActivity : AppCompatActivity() {
                 setPadding(dp(20), 0, dp(20), 0)
                 neu(this, 26, Depth.FIELD, inset = true)
             }
-            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(20) })
-            fun go(toPrivateFolder: Boolean) {
+            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(10) })
+            val statusLabel = label("", 12f, Palette.MUTED).apply {
+                visibility = View.GONE
+                setLineSpacing(0f, 1.15f)
+            }
+            sheet.addView(statusLabel, matchWrap().apply { bottomMargin = dp(12) })
+
+            var checking = false
+            lateinit var playButton: TextView
+            lateinit var downloadButton: TextView
+            lateinit var privateButton: TextView
+            fun setChecking(value: Boolean) {
+                checking = value
+                playButton.isEnabled = !value
+                downloadButton.isEnabled = !value
+                privateButton.isEnabled = !value
+                playButton.alpha = if (value) 0.55f else 1f
+                downloadButton.alpha = if (value) 0.55f else 1f
+                privateButton.alpha = if (value) 0.55f else 1f
+                statusLabel.text = if (value) "Checking redirects and media type…" else statusLabel.text
+                statusLabel.visibility = if (value || statusLabel.text.isNotBlank()) View.VISIBLE else View.GONE
+            }
+            fun resolveUrl(): String? {
                 val raw = input.text.toString().trim()
-                val url = when {
+                return when {
                     DownloadNaming.isHttpUrl(raw) -> raw
                     raw.contains('.') && !raw.contains(' ') -> "https://$raw"
                     else -> null
                 }
-                if (url == null) {
-                    Toast.makeText(this, "Paste a valid http(s) link", Toast.LENGTH_SHORT).show()
-                    return
-                }
-                val host = hostOf(url).lowercase()
-                if (streamingHosts.any { host == it || host.endsWith(".$it") }) {
-                    Toast.makeText(this, "This site uses protected streams that Veyra cannot download.", Toast.LENGTH_LONG).show()
-                    return
-                }
-                dialog.dismiss()
-                val kind = MediaDetect.kindFromExtension(url)
-                if (kind == DetectedMedia.Kind.STREAM) {
-                    Toast.makeText(this, "Streams can be played but not saved as one file.", Toast.LENGTH_LONG).show()
-                    playMedia(Uri.parse(url), null)
-                } else if (kind != null || DownloadNaming.looksLikeDirectFile(url)) {
-                    startUrlDownload(url, cur?.isPrivate == true, toPrivateFolder)
-                } else {
-                    Toast.makeText(this, "Opening the page. Use the menu, Media on this page, to save a video.", Toast.LENGTH_LONG).show()
-                    navigate(url)
-                }
             }
-            val actions = row().apply { gravity = Gravity.END }
-            actions.addView(textButton("Cancel") { dialog.dismiss() })
-            actions.addView(textButton("Private") { go(true) }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
-            actions.addView(textButton("Download", primary = true) { go(false) }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
-            sheet.addView(actions, matchWrap())
+            fun runAction(playOnly: Boolean, toPrivateFolder: Boolean) {
+                if (checking) return
+                val url = resolveUrl()
+                if (url == null) {
+                    statusLabel.text = "Paste a valid HTTP(S) link."
+                    statusLabel.visibility = View.VISIBLE
+                    return
+                }
+                val initialHost = hostOf(url).lowercase()
+                if (streamingHosts.any { initialHost == it || initialHost.endsWith(".$it") }) {
+                    statusLabel.text = "This protected website must use its original player. Veyra will not extract its streams."
+                    statusLabel.visibility = View.VISIBLE
+                    return
+                }
+                setChecking(true)
+                Thread {
+                    val result = inspectLink(url)
+                    runOnUiThread {
+                        if (!dialog.isShowing) return@runOnUiThread
+                        setChecking(false)
+                        if (result.error != null) {
+                            statusLabel.text = result.error
+                            statusLabel.visibility = View.VISIBLE
+                            return@runOnUiThread
+                        }
+                        val finalHost = hostOf(result.finalUrl).lowercase()
+                        if (streamingHosts.any { finalHost == it || finalHost.endsWith(".$it") }) {
+                            statusLabel.text = "The link redirects to a protected streaming service. Use its website or official app."
+                            statusLabel.visibility = View.VISIBLE
+                            return@runOnUiThread
+                        }
+
+                        val finalUrl = result.finalUrl
+                        val mime = result.mimeType?.substringBefore(';')?.trim()
+                        val kind = MediaDetect.kindFromExtension(finalUrl) ?: MediaDetect.kindFromMime(mime.orEmpty())
+                        val htmlPage = mime.equals("text/html", ignoreCase = true) ||
+                            mime.equals("application/xhtml+xml", ignoreCase = true)
+                        val uri = Uri.parse(finalUrl)
+                        val playbackMime = mime ?: when (MediaDetect.kindFromExtension(finalUrl)) {
+                            DetectedMedia.Kind.STREAM -> if (MediaDetect.extensionOf(finalUrl) == "mpd") "application/dash+xml" else "application/vnd.apple.mpegurl"
+                            else -> null
+                        }
+
+                        when {
+                            htmlPage -> {
+                                if (playOnly || toPrivateFolder) {
+                                    statusLabel.text = if (playOnly) {
+                                        "This link is a webpage, not a direct media file. Open it in Veyra and use Media on this page."
+                                    } else {
+                                        "This is a webpage, not a file. Open it in Veyra, then choose Private for a supported media source."
+                                    }
+                                    statusLabel.visibility = View.VISIBLE
+                                } else {
+                                    dialog.dismiss()
+                                    navigate(finalUrl)
+                                }
+                            }
+                            kind == DetectedMedia.Kind.STREAM -> {
+                                if (playOnly) {
+                                    dialog.dismiss()
+                                    playMedia(uri, null, playbackMime)
+                                } else {
+                                    statusLabel.text = "This is a segmented stream. Use Play / Stream when the source allows it; Veyra cannot save it as one file."
+                                    statusLabel.visibility = View.VISIBLE
+                                }
+                            }
+                            kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO -> {
+                                dialog.dismiss()
+                                if (playOnly) playMedia(uri, null, playbackMime)
+                                else startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder)
+                            }
+                            !playOnly && !mime.isNullOrBlank() && mime != "text/html" -> {
+                                // A known non-HTML MIME type is a direct resource even without a filename extension.
+                                dialog.dismiss()
+                                startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder)
+                            }
+                            !playOnly && DownloadNaming.looksLikeDirectFile(finalUrl) -> {
+                                dialog.dismiss()
+                                startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder)
+                            }
+                            else -> {
+                                if (playOnly || toPrivateFolder) {
+                                    statusLabel.text = "Veyra couldn't confirm a direct media file at this URL. Open the page first, then use Media on this page."
+                                    statusLabel.visibility = View.VISIBLE
+                                } else {
+                                    dialog.dismiss()
+                                    navigate(finalUrl)
+                                }
+                            }
+                        }
+                    }
+                }.apply { name = "veyra-link-inspector"; isDaemon = true }.start()
+            }
+
+            val mainActions = row().apply { gravity = Gravity.CENTER }
+            playButton = textButton("Play / Stream", primary = true) { runAction(playOnly = true, toPrivateFolder = false) }
+            downloadButton = textButton("Download") { runAction(playOnly = false, toPrivateFolder = false) }
+            mainActions.addView(playButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            mainActions.addView(downloadButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+            sheet.addView(mainActions, matchWrap())
+            val secondaryActions = row().apply { gravity = Gravity.END }
+            secondaryActions.addView(textButton("Cancel") { dialog.dismiss() }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            privateButton = textButton("Private") { runAction(playOnly = false, toPrivateFolder = true) }
+            secondaryActions.addView(privateButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+            sheet.addView(secondaryActions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
         }
     }
+
 
     // ---- VPN ---------------------------------------------------------------------------
 
