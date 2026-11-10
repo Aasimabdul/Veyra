@@ -21,6 +21,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -228,7 +229,13 @@ class PlayerActivity : AppCompatActivity() {
         player = exo
         playerView.player = exo
         val mediaItem = MediaItem.Builder().setUri(uri).apply {
-            intent?.getStringExtra("mime_type")?.trim()?.takeIf { it.isNotEmpty() }?.let { setMimeType(it) }
+            val requestedMime = intent?.getStringExtra("mime_type")?.substringBefore(';')?.trim()
+            val playbackMime = when (requestedMime?.lowercase(java.util.Locale.ROOT)) {
+                "application/vnd.apple.mpegurl", "audio/mpegurl" -> MimeTypes.APPLICATION_M3U8
+                "application/dash+xml" -> MimeTypes.APPLICATION_MPD
+                else -> requestedMime
+            }
+            if (!playbackMime.isNullOrBlank()) setMimeType(playbackMime)
         }.build()
         exo.setMediaItem(mediaItem)
         exo.playbackParameters = exo.playbackParameters.withSpeed(speeds[speedIndex])
