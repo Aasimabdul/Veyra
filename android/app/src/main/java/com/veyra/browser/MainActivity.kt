@@ -18,6 +18,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private var blockedTotal = 0
     private var strictProtection = false
     private var cookieMode = "trackers"
+    private var websiteColorScheme = "light"
     private var javascriptEnabled = true
     private var blockPopups = true
     private lateinit var geckoView: GeckoView
@@ -187,6 +189,7 @@ class MainActivity : AppCompatActivity() {
         cookieMode = prefs.getString("cookie_mode", "trackers") ?: "trackers"
         javascriptEnabled = prefs.getBoolean("javascript_enabled", true)
         blockPopups = prefs.getBoolean("block_popups", true)
+        websiteColorScheme = prefs.getString("website_color_scheme", "light") ?: "light"
         applyTheme()
 
         val contentBlockingSettings = ContentBlocking.Settings.Builder()
@@ -200,10 +203,13 @@ class MainActivity : AppCompatActivity() {
             GeckoRuntimeSettings.Builder()
                 .contentBlocking(contentBlockingSettings)
                 .javaScriptEnabled(javascriptEnabled)
+                .preferredColorScheme(websiteColorSchemeCode())
                 .consoleOutput(false)
                 .remoteDebuggingEnabled(false)
                 .build()
         ).also { sharedRuntime = it }
+        // A shared GeckoRuntime may outlive Activity recreation; reconcile the active preference too.
+        runtime.settings.setPreferredColorScheme(websiteColorSchemeCode())
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
         installMediaScanner()
         geckoView = GeckoView(this)
@@ -380,6 +386,47 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- theme & privacy settings -----------------------------------------------------
+
+    private fun translucent(color: Int, alpha: Int): Int =
+        Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+
+    private fun websiteColorSchemeCode(): Int = when (websiteColorScheme.lowercase()) {
+        "dark" -> GeckoRuntimeSettings.COLOR_SCHEME_DARK
+        "system" -> GeckoRuntimeSettings.COLOR_SCHEME_SYSTEM
+        else -> GeckoRuntimeSettings.COLOR_SCHEME_LIGHT
+    }
+
+    private fun showWebsiteAppearance() {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Website appearance", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "This sets the web page's preferred color scheme. Light is the default to avoid sites unexpectedly choosing a black/dark page; some websites may still use their own colors.",
+                13f, Palette.MUTED
+            ).apply { setPadding(0, dp(8), 0, dp(14)); setLineSpacing(0f, 1.2f) }, matchWrap())
+            listOf(
+                Triple("light", "Light", "Prefer light website themes"),
+                Triple("system", "System", "Follow Android's appearance"),
+                Triple("dark", "Dark", "Prefer dark website themes")
+            ).forEach { (key, name, description) ->
+                val selected = websiteColorScheme == key
+                sheet.addView(
+                    listRow(
+                        well(icon(if (selected) Icons.SHIELD else Icons.SETTINGS, if (selected) Palette.ACCENT else Palette.MUTED, 20)),
+                        name, description,
+                        icon(if (selected) Icons.SHIELD else Icons.CHEVRON, Palette.ACCENT, 18)
+                    ) {
+                        websiteColorScheme = key
+                        prefs.edit().putString("website_color_scheme", key).apply()
+                        runtime.settings.setPreferredColorScheme(websiteColorSchemeCode())
+                        dialog.dismiss()
+                        cur?.session?.reload()
+                        Toast.makeText(this, "Website appearance updated", Toast.LENGTH_SHORT).show()
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+                )
+            }
+        }
+    }
 
     private fun systemIsDark() =
         (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -559,10 +606,10 @@ class MainActivity : AppCompatActivity() {
             elevation = dpf(6f)
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(accentSurface, surface, ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f))
+                intArrayOf(translucent(accentSurface, 222), translucent(surface, 214), translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f), 218))
             ).apply {
                 cornerRadius = dpf(30f)
-                setStroke(dp(1), outline)
+                setStroke(dp(1), translucent(outline, 155))
             }
         }
         data class NavItem(val key: String, val paths: List<String>, val description: String)
@@ -620,8 +667,8 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "Address. Tap to edit"
             background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dpf(22f)
-                setColor(ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.035f else 0.075f))
-                setStroke(dp(1), ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.18f))
+                setColor(translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.035f else 0.075f), 216))
+                setStroke(dp(1), translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.18f), 115))
             }
             setOnClickListener {
                 if (dockHidden) setDockCollapsed(false) else showSearch(currentUrl)
@@ -729,14 +776,7 @@ class MainActivity : AppCompatActivity() {
             .apply { alpha = if (canGoForward) 1f else 0.4f }
         backButton = back
         forwardButton = forward
-        val share = cell(Icons.SHARE, "Share page") {
-            if (currentUrl.isNotBlank()) {
-                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, currentUrl)
-                }, "Share page"))
-            }
-        }
+        val home = cell(Icons.HOME, "Home") { show("home") }
         val tabsButton = LinearLayout(this).apply {
             gravity = Gravity.CENTER
             contentDescription = "Tabs, ${tabs.size} open"
@@ -751,7 +791,7 @@ class MainActivity : AppCompatActivity() {
         var menuAnchor: View? = null
         val menu = cell(Icons.MENU, "Menu", filled = true) { menuAnchor?.let { showBrowserMenu(it) } }
         menuAnchor = menu
-        listOf(back, forward, share, tabsButton, menu).forEach { actions.addView(it, lp(0, dp(44), 1f)) }
+        listOf(back, forward, home, tabsButton, menu).forEach { actions.addView(it, lp(0, dp(44), 1f)) }
         capsule.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(2) })
         browserActionRow = actions
 
@@ -1056,25 +1096,20 @@ class MainActivity : AppCompatActivity() {
         mediaBanner = null
         val tab = cur ?: return
         if (tab.media.isEmpty() || websiteFullscreen || tab.url in dismissedBanners) return
-        val first = tab.media.first()
         val count = tab.media.size
+        val downloadableCount = tab.media.count { it.downloadable }
         val banner = row().apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(14), dp(10), dp(10), dp(10))
             neu(this, 20, Depth.CARD)
         }
-        banner.addView(icon(Icons.PLAY, Palette.ACCENT, 18, filled = true))
+        banner.addView(icon(Icons.DOWNLOAD, Palette.ACCENT, 18))
         banner.addView(label(
-            if (count == 1) "Video found" else "$count videos found", 14f, Palette.TEXT, 1
-        ).apply { setPadding(dp(10), 0, dp(8), 0) }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        banner.addView(textButton("Play", primary = true) {
-            if (count == 1) playMedia(Uri.parse(first.url), first.title) else showMediaSheet()
-        })
-        if (tab.media.any { it.downloadable }) {
-            banner.addView(textButton("Download") {
-                val only = tab.media.singleOrNull()
-                if (only != null && only.downloadable) startUrlDownload(only.url, tab.isPrivate) else showMediaSheet()
-            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
+            if (count == 1) tab.media.first().qualityLabel else "$count media sources",
+            13f, Palette.TEXT, 1
+        ).apply { setPadding(dp(10), 0, dp(8), 0); maxLines = 2 }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (downloadableCount > 0) {
+            banner.addView(textButton("Download", primary = true) { showMediaSheet() })
         }
         banner.addView(iconButton(Icons.CLOSE, "Dismiss", Palette.MUTED, 34, 12, false) {
             dismissedBanners.add(tab.url)
@@ -1988,6 +2023,7 @@ class MainActivity : AppCompatActivity() {
         ) { enabled -> setAppLock(enabled) }
         actionRow(Icons.SHIELD, "Privacy", "Blocked trackers, cookies, JavaScript") { show("privacy") }
         actionRow(Icons.SETTINGS, "Appearance", "Theme: ${if (themeKey == Themes.SYSTEM) "System" else Themes.byKey(themeKey).name}") { show("appearance") }
+        actionRow(Icons.SETTINGS, "Website appearance", "Light, dark or Android system page colors") { showWebsiteAppearance() }
         actionRow(Icons.LOCK, "Private Space", "Encrypted notes and files") { show("private") }
         actionRow(Icons.SHIELD, "VPN", vpnSubtitle()) { show("vpn") }
         actionRow(Icons.CLOCK, "History", "Pages visited in normal tabs") { show("history") }
@@ -2741,59 +2777,63 @@ class MainActivity : AppCompatActivity() {
     private fun showMediaSheet() {
         val tab = cur ?: return
         showSheet { sheet, dialog ->
-            sheet.addView(label("Media on this page", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label("Choose video quality", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Direct files can be played or saved. HLS/DASH streams may play when the source permits it; protected website video must stay in its original player.",
+                "Select one detected media source, then download it. Quality is shown only when Veyra can infer it from page metadata or the URL; unknown quality is labelled honestly. Protected streams stay in the website player.",
                 13f, Palette.MUTED
-            ).apply { setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
-            val list = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
-            if (tab.media.isEmpty()) {
-                val host = hostOf(tab.url)
-                val protectedSite = streamingHosts.any { host == it || host.endsWith(".$it") }
-                list.addView(label(
-                    if (protectedSite)
-                        "$host plays protected streams that Veyra cannot play or save outside the site. " +
-                            "Downloading from it is also against its terms. Use the site's own offline feature " +
-                            "(for example YouTube Premium) for saved videos."
-                    else
-                        "No directly playable video was found yet. Start playing the video on the page, " +
-                            "then open this again. Videos delivered as blob/DASH/DRM streams cannot be saved.",
-                    13f, Palette.MUTED
-                ).apply { setLineSpacing(0f, 1.25f); setPadding(dp(4), dp(8), dp(4), dp(8)) })
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
+
+            val candidates = tab.media.filter { it.downloadable }
+            var selected: DetectedMedia? = candidates.firstOrNull()
+            val list = column().apply { setPadding(dp(6), dp(4), dp(6), dp(4)) }
+            fun renderOptions() {
+                list.removeAllViews()
+                candidates.forEach { media ->
+                    val isSelected = selected?.url == media.url
+                    val card = column().apply {
+                        setPadding(dp(14), dp(13), dp(14), dp(13))
+                        neu(this, 18, if (isSelected) Depth.WELL else Depth.BUTTON)
+                        isClickable = true
+                        isFocusable = true
+                        contentDescription = "${media.qualityLabel}, ${media.fileName}"
+                        setOnClickListener {
+                            selected = media
+                            renderOptions()
+                        }
+                    }
+                    val headline = row()
+                    headline.addView(icon(
+                        if (media.kind == DetectedMedia.Kind.AUDIO) Icons.FILE else Icons.PLAY,
+                        if (isSelected) Palette.ACCENT else Palette.MUTED, 18
+                    ))
+                    headline.addView(label(media.qualityLabel, 14f, Palette.TEXT, 1).apply {
+                        setPadding(dp(10), 0, 0, 0)
+                    }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    if (isSelected) headline.addView(label("SELECTED", 9f, Palette.ACCENT, 1))
+                    card.addView(headline, matchWrap())
+                    card.addView(label(
+                        "${media.title.ifBlank { media.fileName }} · ${hostOf(media.url)}",
+                        12f, Palette.MUTED
+                    ).apply {
+                        maxLines = 2
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        setPadding(dp(28), dp(5), 0, 0)
+                    }, matchWrap())
+                    list.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = dp(10)
+                    })
+                }
             }
-            tab.media.forEach { media ->
-                val card = column().apply {
-                    setPadding(dp(16), dp(14), dp(16), dp(14))
-                    neu(this, 20, Depth.BUTTON)
-                }
-                card.addView(label(media.title.ifBlank { media.fileName }, 14f, Palette.TEXT, 1).apply {
-                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                })
-                val kind = when (media.kind) {
-                    DetectedMedia.Kind.VIDEO -> "Video"
-                    DetectedMedia.Kind.AUDIO -> "Audio"
-                    DetectedMedia.Kind.STREAM -> "Stream"
-                }
-                card.addView(label("$kind · ${hostOf(media.url)} · ${media.fileName}", 12f, Palette.MUTED).apply {
-                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                    setPadding(0, dp(4), 0, dp(10))
-                })
-                val actions = row()
-                actions.addView(textButton("Play", primary = true) {
-                    dialog.dismiss(); playMedia(Uri.parse(media.url), media.title, media.mimeType)
-                }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                if (media.downloadable) {
-                    actions.addView(textButton("Save") {
-                        dialog.dismiss()
-                        startUrlDownload(media.url, tab.isPrivate)
-                    }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
-                    actions.addView(textButton("Private") {
-                        dialog.dismiss()
-                        startUrlDownload(media.url, tab.isPrivate, privateFolder = true)
-                    }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
-                }
-                card.addView(actions, matchWrap())
-                list.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
+            if (candidates.isEmpty()) {
+                list.addView(label(
+                    if (tab.unsupportedMedia > 0 || tab.media.any { it.kind == DetectedMedia.Kind.STREAM })
+                        "No direct downloadable file was found. This video may use a protected or segmented stream; keep using the website's own player."
+                    else
+                        "No downloadable video source was detected yet. Start the video on the page and open this menu again.",
+                    13f, Palette.MUTED
+                ).apply { setLineSpacing(0f, 1.2f); setPadding(dp(6), dp(8), dp(6), dp(8)) }, matchWrap())
+            } else {
+                renderOptions()
             }
             val scroller = ScrollView(this).apply {
                 clipChildren = false; clipToPadding = false
@@ -2802,14 +2842,23 @@ class MainActivity : AppCompatActivity() {
             }
             sheet.addView(scroller, lp(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                if (tab.media.size > 2) dp(340) else ViewGroup.LayoutParams.WRAP_CONTENT
+                if (candidates.size > 3) dp(300) else ViewGroup.LayoutParams.WRAP_CONTENT
             ))
             if (tab.unsupportedMedia > 0) {
                 sheet.addView(label(
-                    "${tab.unsupportedMedia} browser-managed media source(s) are not ordinary files. Veyra will not extract DRM-protected streams; use the website's own player for those sources.",
+                    "${tab.unsupportedMedia} browser-managed source(s) cannot be saved as an ordinary file. Veyra does not extract DRM-protected media.",
                     12f, Palette.MUTED
                 ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(10), 0, 0) }, matchWrap())
             }
+            sheet.addView(textButton("Download", primary = true) {
+                val media = selected
+                if (media == null) {
+                    Toast.makeText(this, "No directly downloadable source is available", Toast.LENGTH_LONG).show()
+                } else {
+                    dialog.dismiss()
+                    startUrlDownload(media.url, tab.isPrivate, suggestedFileName = media.fileName)
+                }
+            }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
         }
     }
 
@@ -2861,13 +2910,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showBrowserMenu(anchor: View) {
-        showSideSheet(anchor) { sheet, dialog ->
+        showSideSheet(anchor) { sheet, popup ->
             fun item(paths: List<String>, text: String, action: () -> Unit) {
                 val rowView = row().apply {
                     setPadding(dp(12), dp(6), dp(12), dp(6))
                     minimumHeight = dp(44)
                     neu(this, 16, Depth.BUTTON, pressable = true)
-                    setOnClickListener { dialog.dismiss(); action() }
+                    setOnClickListener { popup.dismiss(); action() }
                 }
                 rowView.addView(icon(paths, Palette.ACCENT, 18))
                 rowView.addView(label(text, 14f, Palette.TEXT, 1).apply { setPadding(dp(10), 0, 0, 0) })
@@ -2877,6 +2926,14 @@ class MainActivity : AppCompatActivity() {
                 if (currentUrl.isNotBlank()) {
                     bookmarks.add(currentUrl); persistBookmarks()
                     Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                }
+            }
+            item(Icons.SHARE, "Share page") {
+                if (currentUrl.isNotBlank()) {
+                    startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, currentUrl)
+                    }, "Share page"))
                 }
             }
             if (DownloadNaming.looksPlayable(currentUrl)) {
@@ -3014,22 +3071,18 @@ class MainActivity : AppCompatActivity() {
 
     /** Compact right-side action drawer used by the browser's three-dot menu. */
     /** Compact, scrollable menu positioned against the three-dot toolbar action. */
-    private fun showSideSheet(anchor: View, build: (LinearLayout, Dialog) -> Unit) {
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+    private fun showSideSheet(anchor: View, build: (LinearLayout, PopupWindow) -> Unit) {
         val sheet = column().apply {
             setPadding(dp(12), dp(12), dp(12), dp(12))
             neu(this, 22, Depth.CARD)
             isClickable = true
         }
-        build(sheet, dialog)
         val scroller = ScrollView(this).apply {
             clipChildren = false
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
             isVerticalScrollBarEnabled = false
             setPadding(0, dp(4), 0, dp(4))
-            addView(sheet, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         val screenWidth = resources.displayMetrics.widthPixels
         val menuWidth = minOf(
@@ -3038,33 +3091,36 @@ class MainActivity : AppCompatActivity() {
         )
         val maxHeight = (resources.displayMetrics.heightPixels - systemInsetTop - systemInsetBottom - dp(24))
             .coerceAtLeast(dp(220))
+        scroller.addView(sheet, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        // Let the popup measure to its content, bounded to the visible screen. The old full-height
+        // Dialog dimmed and covered much of the webpage, making the menu look like a side drawer.
         scroller.measure(
             View.MeasureSpec.makeMeasureSpec(menuWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST)
         )
-        val menuHeight = scroller.measuredHeight.coerceAtMost(maxHeight)
-        dialog.setContentView(scroller)
-        dialog.setCanceledOnTouchOutside(true)
-        dialog.show()
-
+        val menuHeight = scroller.measuredHeight.coerceIn(dp(180), maxHeight)
+        val popup = PopupWindow(scroller, menuWidth, menuHeight, true).apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            isOutsideTouchable = true
+            elevation = dpf(14f)
+            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+        build(sheet, popup)
+        // Re-measure after the rows are inserted so the anchor position matches the actual menu.
+        scroller.measure(
+            View.MeasureSpec.makeMeasureSpec(menuWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST)
+        )
+        val height = scroller.measuredHeight.coerceIn(dp(180), maxHeight)
+        popup.height = height
         val position = IntArray(2)
         anchor.getLocationOnScreen(position)
-        val maxTop = (resources.displayMetrics.heightPixels - systemInsetBottom - menuHeight - dp(8))
+        val maxTop = (resources.displayMetrics.heightPixels - systemInsetBottom - height - dp(8))
             .coerceAtLeast(systemInsetTop + dp(8))
-        val y = (position[1] + anchor.height - menuHeight)
+        val y = (position[1] + anchor.height - height)
             .coerceIn(systemInsetTop + dp(8), maxTop)
-        dialog.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setLayout(menuWidth, menuHeight)
-            setGravity(Gravity.TOP or Gravity.END)
-            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            attributes = attributes.apply {
-                dimAmount = 0.24f
-                this.y = y
-            }
-        }
-        dialog.window?.setLayout(menuWidth, menuHeight)
+        popup.showAtLocation(root, Gravity.TOP or Gravity.END, systemInsetRight + dp(12), y)
     }
 
     private fun showSheet(build: (LinearLayout) -> Unit) = showSheet { sheet, _ -> build(sheet) }
