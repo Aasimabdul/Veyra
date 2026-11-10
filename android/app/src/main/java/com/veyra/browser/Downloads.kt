@@ -687,7 +687,10 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
                     o.optString("url"), // Empty for private-browsing downloads: never restore their source URL.
                     o.getString("name"),
                     o.optString("mime").ifBlank { null },
-                    o.optBoolean("private_origin", false)
+                    o.optBoolean(
+                        "private_origin",
+                        o.optString("url").isBlank() && o.optBoolean("pf", false)
+                    )
                 )
                 item.total = o.optLong("total", -1)
                 item.done = o.optLong("done", 0)
