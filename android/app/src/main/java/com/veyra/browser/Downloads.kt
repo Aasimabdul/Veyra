@@ -96,10 +96,17 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
     }
 
     /** Direct URL download (used for plain media/file links). Verifies status and content type. */
-    fun enqueueUrl(url: String, isPrivate: Boolean, privateFolder: Boolean = false) {
+    fun enqueueUrl(
+        url: String,
+        isPrivate: Boolean,
+        privateFolder: Boolean = false,
+        suggestedFileName: String? = null
+    ) {
         if (!DownloadNaming.isHttpUrl(url)) return
+        val preferredName = suggestedFileName?.let { DownloadNaming.sanitize(it) }
+            ?.takeIf { it.isNotBlank() } ?: DownloadNaming.fileName(null, url)
         val item = DownloadItem(ids.incrementAndGet(), url,
-            DownloadNaming.uniqueName(DownloadNaming.fileName(null, url), takenNames()), null, isPrivate)
+            DownloadNaming.uniqueName(preferredName, takenNames()), null, isPrivate)
         item.privateFolder = privateFolder
         items.add(0, item)
         pool.execute { runFromUrl(item, 0L) }
