@@ -2578,9 +2578,9 @@ class MainActivity : AppCompatActivity() {
         card.addView(label(
             when {
                 status == VpnManager.Status.ON -> when {
-                    vpnSummary?.routesAllTraffic == true && vpnSummary.dns.isNotEmpty() ->
+                    vpnSummary != null && vpnSummary.routesAllTraffic && vpnSummary.dns.isNotEmpty() ->
                         "The tunnel is up and the profile includes default routes for both IPv4 and IPv6. A kill switch is not provided."
-                    vpnSummary?.routesAllTraffic == true ->
+                    vpnSummary != null && vpnSummary.routesAllTraffic ->
                         "The profile routes IPv4 and IPv6 by default, but specifies no DNS server. DNS behavior may depend on Android and the network."
                     vpnSummary?.routesAllIpv4 == true ->
                         "The tunnel is up, but only IPv4 has a default route. IPv6 traffic may bypass the tunnel."
