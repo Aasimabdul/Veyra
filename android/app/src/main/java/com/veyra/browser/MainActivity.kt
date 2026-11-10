@@ -737,8 +737,9 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
             })
         }
-        lateinit var menu: View
-        menu = cell(Icons.MENU, "Menu", filled = true) { showBrowserMenu(menu) }
+        var menuAnchor: View? = null
+        val menu = cell(Icons.MENU, "Menu", filled = true) { menuAnchor?.let { showBrowserMenu(it) } }
+        menuAnchor = menu
         listOf(back, forward, share, tabsButton, menu).forEach { actions.addView(it, lp(0, dp(44), 1f)) }
         capsule.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(2) })
         browserActionRow = actions
