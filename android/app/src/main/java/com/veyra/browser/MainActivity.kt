@@ -318,6 +318,11 @@ class MainActivity : AppCompatActivity() {
             currentPage == "lock" -> super.onBackPressed()
             websiteFullscreen -> cur?.session?.exitFullScreen()
             currentPage == "browse" && canGoBack -> cur?.session?.goBack()
+            currentPage == "browse" && screenBackStack.isNotEmpty() -> {
+                val destination = screenBackStack.removeLast()
+                restoringScreen = true
+                try { show(destination) } finally { restoringScreen = false }
+            }
             currentPage == "browse" -> show("home")
             screenBackStack.isNotEmpty() -> {
                 val destination = screenBackStack.removeLast()
@@ -732,7 +737,8 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
             })
         }
-        val menu = cell(Icons.MENU, "Menu", filled = true) { showBrowserMenu() }
+        lateinit var menu: View
+        menu = cell(Icons.MENU, "Menu", filled = true) { showBrowserMenu(menu) }
         listOf(back, forward, share, tabsButton, menu).forEach { actions.addView(it, lp(0, dp(44), 1f)) }
         capsule.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(2) })
         browserActionRow = actions
@@ -2347,8 +2353,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showBrowserMenu() {
-        showSideSheet { sheet, dialog ->
+    private fun showBrowserMenu(anchor: View) {
+        showSideSheet(anchor) { sheet, dialog ->
             fun item(paths: List<String>, text: String, action: () -> Unit) {
                 val rowView = row().apply {
                     setPadding(dp(12), dp(6), dp(12), dp(6))
@@ -2500,31 +2506,48 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Compact right-side action drawer used by the browser's three-dot menu. */
-    private fun showSideSheet(build: (LinearLayout, Dialog) -> Unit) {
+    private fun showSideSheet(anchor: View, build: (LinearLayout, Dialog) -> Unit) {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         val sheet = column().apply {
-            setPadding(dp(12), dp(18), dp(12), dp(18))
+            setPadding(dp(12), dp(14), dp(12), dp(14))
             neu(this, 24, Depth.CARD)
             isClickable = true
         }
         build(sheet, dialog)
         val scroller = ScrollView(this).apply {
             clipToPadding = false
+            isFillViewport = false
             overScrollMode = View.OVER_SCROLL_NEVER
-            setPadding(0, dp(8), 0, dp(8))
-            addView(sheet)
+            setPadding(0, dp(4), 0, dp(4))
+            addView(sheet, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
+        val screenWidth = resources.displayMetrics.widthPixels
+        val menuWidth = minOf(dp(276), (screenWidth - systemInsetLeft - systemInsetRight - dp(24)).coerceAtLeast(dp(220)))
+        val maxHeight = (resources.displayMetrics.heightPixels - systemInsetTop - systemInsetBottom - dp(24)).coerceAtLeast(dp(240))
+        scroller.measure(
+            View.MeasureSpec.makeMeasureSpec(menuWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST)
+        )
+        val menuHeight = scroller.measuredHeight.coerceIn(dp(180), maxHeight)
         dialog.setContentView(scroller)
-        dialog.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.argb(170, 4, 9, 16)))
-            setLayout(dp(292), ViewGroup.LayoutParams.MATCH_PARENT)
-            setGravity(Gravity.END)
-            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        }
         dialog.setCanceledOnTouchOutside(true)
         dialog.show()
-        dialog.window?.setLayout(dp(292), ViewGroup.LayoutParams.MATCH_PARENT)
+        val anchorPosition = IntArray(2)
+        anchor.getLocationOnScreen(anchorPosition)
+        val y = (anchorPosition[1] + anchor.height - menuHeight).coerceAtLeast(systemInsetTop + dp(8))
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(menuWidth, menuHeight)
+            setGravity(Gravity.TOP or Gravity.END)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes = attributes.apply {
+                dimAmount = 0.22f
+                this.y = y
+            }
+        }
+        dialog.window?.setLayout(menuWidth, menuHeight)
     }
 
     private fun showSheet(build: (LinearLayout) -> Unit) = showSheet { sheet, _ -> build(sheet) }
