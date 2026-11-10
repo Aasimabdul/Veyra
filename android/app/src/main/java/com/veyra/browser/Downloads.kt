@@ -667,6 +667,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
                 // Do not persist the origin URL for private-browsing downloads, even when the
                 // user explicitly saves the resulting file into the private folder.
                 put("url", if (item.isPrivate) "" else item.url)
+                put("private_origin", item.isPrivate)
                 put("name", item.name)
                 put("mime", item.mime ?: ""); put("total", item.total); put("done", item.done)
                 put("state", item.state.name); put("error", item.error ?: "")
@@ -681,8 +682,13 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             val array = JSONArray(prefs.getString("items", "[]") ?: "[]")
             for (i in 0 until array.length()) {
                 val o = array.getJSONObject(i)
-                val item = DownloadItem(o.getLong("id"), o.getString("url"), o.getString("name"),
-                    o.optString("mime").ifBlank { null }, false)
+                val item = DownloadItem(
+                    o.getLong("id"),
+                    o.optString("url"), // Empty for private-browsing downloads: never restore their source URL.
+                    o.getString("name"),
+                    o.optString("mime").ifBlank { null },
+                    o.optBoolean("private_origin", false)
+                )
                 item.total = o.optLong("total", -1)
                 item.done = o.optLong("done", 0)
                 item.error = o.optString("error").ifBlank { null }
