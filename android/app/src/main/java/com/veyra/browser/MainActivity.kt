@@ -2069,7 +2069,7 @@ class MainActivity : AppCompatActivity() {
         if (files.isEmpty() && running.isEmpty()) {
             page.addView(emptyState(
                 Icons.LOCK, "Nothing here yet",
-                "Choose Private on a detected video, or paste a link in Downloads and tap Private."
+                "Download a supported media source, then long-press the completed download and choose Move to private folder."
             ))
         }
         files.forEach { file ->
@@ -2442,7 +2442,7 @@ class MainActivity : AppCompatActivity() {
                     else -> null
                 }
             }
-            fun runAction(playOnly: Boolean, toPrivateFolder: Boolean) {
+            fun runAction(playOnly: Boolean) {
                 if (checking) return
                 val url = resolveUrl()
                 if (url == null) {
@@ -2487,11 +2487,9 @@ class MainActivity : AppCompatActivity() {
 
                         when {
                             htmlPage -> {
-                                if (playOnly || toPrivateFolder) {
+                                if (playOnly) {
                                     statusLabel.text = if (playOnly) {
                                         "This link is a webpage, not a direct media file. Open it in Veyra and use Media on this page."
-                                    } else {
-                                        "This is a webpage, not a file. Open it in Veyra, then choose Private for a supported media source."
                                     }
                                     statusLabel.visibility = View.VISIBLE
                                 } else {
@@ -2511,7 +2509,7 @@ class MainActivity : AppCompatActivity() {
                             kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO -> {
                                 dialog.dismiss()
                                 if (playOnly) playMedia(uri, null, playbackMime)
-                                else startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder, result.suggestedFileName)
+                                else startUrlDownload(finalUrl, cur?.isPrivate == true, suggestedFileName = result.suggestedFileName)
                             }
                             !playOnly && !mime.isNullOrBlank() && mime != "text/html" -> {
                                 // A known non-HTML MIME type is a direct resource even without a filename extension.
@@ -2537,18 +2535,15 @@ class MainActivity : AppCompatActivity() {
             }
 
             val mainActions = row().apply { gravity = Gravity.CENTER }
-            val playButton = textButton("Play / Stream", primary = true) { runAction(playOnly = true, toPrivateFolder = false) }
-            val downloadButton = textButton("Download") { runAction(playOnly = false, toPrivateFolder = false) }
+            val playButton = textButton("Play / Stream", primary = true) { runAction(playOnly = true) }
+            val downloadButton = textButton("Download") { runAction(playOnly = false) }
             actionButtons.add(playButton)
             actionButtons.add(downloadButton)
             mainActions.addView(playButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             mainActions.addView(downloadButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
             sheet.addView(mainActions, matchWrap())
             val secondaryActions = row().apply { gravity = Gravity.END }
-            secondaryActions.addView(textButton("Cancel") { dialog.dismiss() }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            val privateButton = textButton("Private") { runAction(playOnly = false, toPrivateFolder = true) }
-            actionButtons.add(privateButton)
-            secondaryActions.addView(privateButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+            secondaryActions.addView(textButton("Cancel") { dialog.dismiss() }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             sheet.addView(secondaryActions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
         }
     }
@@ -2724,7 +2719,7 @@ class MainActivity : AppCompatActivity() {
                 status == VpnManager.Status.DISCONNECTING -> "Disconnecting the tunnel and releasing its resources…"
                 status == VpnManager.Status.ERROR -> vpn.lastError ?: "Something went wrong."
                 vpn.hasConfig() -> "Tap Connect to start the tunnel."
-                else -> "Try experimental WARP setup, or import a WireGuard profile from a provider you trust."
+                else -> "Import a WireGuard profile from a provider that offers a free server in your preferred country."
             },
             13f, Palette.MUTED
         ).apply { setLineSpacing(0f, 1.2f) })
@@ -2974,15 +2969,13 @@ class MainActivity : AppCompatActivity() {
                     12f, Palette.MUTED
                 ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(10), 0, 0) }, matchWrap())
             }
-            sheet.addView(textButton("Download", primary = true) {
-                val media = selected
-                if (media == null) {
-                    Toast.makeText(this, "No directly downloadable source is available", Toast.LENGTH_LONG).show()
-                } else {
+            if (candidates.isNotEmpty()) {
+                sheet.addView(textButton("Download", primary = true) {
+                    val media = selected ?: return@textButton
                     dialog.dismiss()
                     startUrlDownload(media.url, tab.isPrivate, suggestedFileName = media.fileName)
-                }
-            }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+                }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+            }
         }
     }
 
@@ -3047,9 +3040,16 @@ class MainActivity : AppCompatActivity() {
                 sheet.addView(rowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { bottomMargin = dp(6) })
             }
             item(Icons.BOOKMARK, "Bookmark this page") {
-                if (currentUrl.isNotBlank()) {
-                    bookmarks.add(currentUrl); persistBookmarks()
-                    Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                val tab = cur
+                when {
+                    tab?.isPrivate == true -> Toast.makeText(
+                        this, "Bookmarks are disabled in private tabs so this page is not saved.", Toast.LENGTH_LONG
+                    ).show()
+                    currentUrl.isBlank() -> Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
+                    else -> {
+                        bookmarks.add(currentUrl); persistBookmarks()
+                        Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
             item(Icons.SHARE, "Share page") {
