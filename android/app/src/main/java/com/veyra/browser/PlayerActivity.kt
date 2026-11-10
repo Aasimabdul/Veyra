@@ -37,6 +37,8 @@ class PlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private lateinit var playerView: PlayerView
     private lateinit var errorView: TextView
+    private lateinit var errorPanel: LinearLayout
+    private lateinit var retryButton: TextView
     private lateinit var topBar: LinearLayout
     private lateinit var quickControls: LinearLayout
     private lateinit var speedButton: TextView
@@ -145,11 +147,24 @@ class PlayerActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             textSize = 15f
             gravity = Gravity.CENTER
-            setPadding(dp(28), dp(28), dp(28), dp(28))
-            background = rounded(Color.argb(225, 16, 23, 34), dp(20).toFloat(), 0x5539D8FF)
+            setLineSpacing(0f, 1.15f)
+        }
+        retryButton = control("Retry playback", "Retry playback") { retryPlayback() }
+        errorPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(22), dp(20), dp(22), dp(18))
+            background = rounded(Color.argb(235, 16, 23, 34), dp(20).toFloat(), 0x5539D8FF)
             visibility = View.GONE
         }
-        root.addView(errorView, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply {
+        errorPanel.addView(errorView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        errorPanel.addView(retryButton, LinearLayout.LayoutParams(dp(164), dp(44)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = dp(14)
+        })
+        root.addView(errorPanel, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply {
             leftMargin = dp(24)
             rightMargin = dp(24)
         })
@@ -162,8 +177,11 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun displayTitle(): String {
-        val raw = source?.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+        // Downloaded MediaStore/FileProvider URIs often end with a numeric ID, not a filename.
+        // MainActivity passes the display name in "name"; prefer it over the URI path.
+        val raw = intent?.getStringExtra("name")?.takeIf { it.isNotBlank() }
             ?: intent?.getStringExtra("title")?.takeIf { it.isNotBlank() }
+            ?: source?.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
             ?: "Now playing"
         return Uri.decode(raw).substringAfterLast(':').take(72)
     }
@@ -215,12 +233,12 @@ class PlayerActivity : AppCompatActivity() {
         if (saved > 0) exo.seekTo(saved)
         exo.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                showError("Can't play this video (${error.errorCodeName}). The format may be unsupported or the source may block direct playback.")
+                showError(playbackErrorMessage(error))
             }
 
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) prefs().edit().remove("pos:$uri").apply()
-                if (state == Player.STATE_READY) errorView.visibility = View.GONE
+                if (state == Player.STATE_READY) errorPanel.visibility = View.GONE
             }
         })
         exo.prepare()
@@ -228,9 +246,38 @@ class PlayerActivity : AppCompatActivity() {
         hideSystemBars()
     }
 
+    private fun playbackErrorMessage(error: PlaybackException): String {
+        val code = error.errorCodeName.uppercase(java.util.Locale.ROOT)
+        return when {
+            "DECODING_FORMAT_UNSUPPORTED" in code ->
+                "This device does not support the video's audio or video codec."
+            "DECODING" in code ->
+                "The media decoder failed. The file may be damaged or use a codec this device cannot decode."
+            "IO_BAD_HTTP_STATUS" in code ->
+                "The media server returned an HTTP error. The link may have expired or access may be denied."
+            "IO_NETWORK" in code || "IO_" in code ->
+                "Veyra could not read the media source. Check the connection or try another link."
+            "PARSING" in code ->
+                "The media container or playlist is invalid or unsupported."
+            else ->
+                "Veyra could not play this source. It may be unavailable, incomplete, or require its original website player."
+        }
+    }
+
     private fun showError(message: String) {
         errorView.text = message
-        errorView.visibility = View.VISIBLE
+        retryButton.isEnabled = player != null
+        retryButton.alpha = if (player != null) 1f else 0.45f
+        errorPanel.visibility = View.VISIBLE
+    }
+
+    private fun retryPlayback() {
+        val active = player ?: return
+        errorPanel.visibility = View.GONE
+        active.seekToDefaultPosition()
+        active.prepare()
+        active.playWhenReady = true
+        hideSystemBars()
     }
 
     private fun hideSystemBars() {
