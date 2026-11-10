@@ -614,7 +614,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         if (!notificationsAllowed()) return
         val totalKnown = item.total > 0
         val percent = if (totalKnown) ((item.done * 100L) / item.total).toInt().coerceIn(0, 100) else 0
-        val title = if (item.isPrivate) "Private download in progress" else item.name
+        val title = if (item.inPrivateFolder) "Private download in progress" else item.name
         val details = buildString {
             append(DownloadNaming.formatBytes(item.done))
             if (totalKnown) append(" of " + DownloadNaming.formatBytes(item.total))
@@ -629,7 +629,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setProgress(if (totalKnown) 100 else 0, percent, !totalKnown)
-            .setVisibility(if (item.isPrivate) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
+            .setVisibility(if (item.inPrivateFolder) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
             .build()
         context.getSystemService(NotificationManager::class.java).notify(item.id.toInt(), notification)
     }
@@ -648,13 +648,13 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         }
         val notification = NotificationCompat.Builder(context, "downloads")
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle(if (item.isPrivate) "Download complete" else item.name)
-            .setContentText("Saved to Downloads/Veyra")
+            .setContentTitle(if (item.inPrivateFolder) "Private download complete" else item.name)
+            .setContentText(if (item.inPrivateFolder) "Saved in Veyra’s Private folder" else "Saved to Downloads/Veyra")
             .setAutoCancel(true)
             .setOngoing(false)
             .setProgress(0, 0, false)
             .setContentIntent(pending)
-            .setVisibility(if (item.isPrivate) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
+            .setVisibility(if (item.inPrivateFolder) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
             .build()
         context.getSystemService(NotificationManager::class.java).notify(item.id.toInt(), notification)
     }
