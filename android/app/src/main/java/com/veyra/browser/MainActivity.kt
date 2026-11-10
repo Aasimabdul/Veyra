@@ -2653,37 +2653,43 @@ class MainActivity : AppCompatActivity() {
 
     private fun showFreeVpnProvidersSheet() {
         showSheet { sheet, dialog ->
-            sheet.addView(label("Free VPN server profiles", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label("Free VPN locations", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Veyra does not own VPN servers and cannot generate valid server credentials. To connect to the US, Netherlands or another country, use a provider that offers that location on its free plan, download a WireGuard profile if the provider permits it, then import it here. Veyra will not fake a country or mark a tunnel connected without a real WireGuard tunnel.",
+                "Veyra connects through a real WireGuard profile; it does not run VPN servers itself. Proton VPN lists free servers in the United States and Netherlands, but profile generation and country availability depend on its current account/plan rules. Choose your country on the provider page, download the .conf file, then import it in Veyra.",
                 13f, Palette.MUTED
             ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
-            sheet.addView(
-                listRow(
-                    well(icon(Icons.SHIELD, Palette.ACCENT, 20)),
-                    "Proton VPN",
-                    "Official free-plan information and WireGuard configuration options",
-                    icon(Icons.CHEVRON, Palette.MUTED, 18)
-                ) {
-                    dialog.dismiss()
-                    openExternalPage("https://account.protonvpn.com/downloads#wireguard-config")
-                },
-                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
-            )
+
+            listOf(
+                Triple("United States", "Choose a US server in Proton's WireGuard profile generator", "us"),
+                Triple("Netherlands", "Choose a Netherlands server in Proton's WireGuard profile generator", "nl")
+            ).forEach { (country, detail, _) ->
+                sheet.addView(
+                    listRow(
+                        well(icon(Icons.SHIELD, Palette.ACCENT, 20)),
+                        country,
+                        detail,
+                        icon(Icons.CHEVRON, Palette.MUTED, 18)
+                    ) {
+                        dialog.dismiss()
+                        openExternalPage("https://account.protonvpn.com/downloads#wireguard-config")
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+                )
+            }
             sheet.addView(
                 listRow(
                     well(icon(Icons.INFO, Palette.ACCENT, 20)),
-                    "WireGuard profile guide",
-                    "How to generate and download a configuration",
+                    "Free server locations and limits",
+                    "Check current Proton VPN Free availability",
                     icon(Icons.CHEVRON, Palette.MUTED, 18)
                 ) {
                     dialog.dismiss()
-                    openExternalPage("https://protonvpn.com/support/wireguard-configurations")
+                    openExternalPage("https://protonvpn.com/support/change-server-free-plan")
                 },
                 lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
             )
             sheet.addView(label(
-                "Free-server countries, country choice and manual profile downloads depend on the provider's current plan rules. A provider login may be required. Profiles you import will appear in Veyra's saved server list.",
+                "Veyra won't invent credentials or report a country connection before the imported tunnel is actually up. Switching locations requires importing/selecting the corresponding profile and disconnecting before switching.",
                 12f, Palette.MUTED
             ).apply { setLineSpacing(0f, 1.2f) }, matchWrap())
         }
