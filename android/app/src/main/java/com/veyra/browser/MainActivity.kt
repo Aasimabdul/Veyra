@@ -284,6 +284,12 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (::downloads.isInitialized) VpnManager.get(this).refresh()
+        // Reattach the active Gecko session after Activity resume/recreation.
+        // This avoids leaving the browser surface blank when Android restores the Activity.
+        if (::geckoView.isInitialized && currentPage == "browse" && cur != null) {
+            geckoView.setBackgroundColor(Palette.BG)
+            showBrowser()
+        }
     }
 
     override fun onStop() {
@@ -736,7 +742,9 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { show("tabs") }
             addView(label(tabs.size.toString(), 12f, Palette.ACCENT, 1).apply {
                 gravity = Gravity.CENTER
-                neu(this, 8, Depth.KNOB, inset = true)
+                // The tab counter itself must not draw the old raised white square.
+                background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+                setPadding(0, 0, 0, 0)
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
             })
         }
