@@ -23,6 +23,19 @@ class MediaDetectTest {
         assertFalse(r.items.single().downloadable)
     }
 
+    @Test fun mimeMetadataClassifiesExtensionlessHlsAndDirectAudio() {
+        val r = MediaDetect.parse("""{"items":[
+            {"url":"https://cdn.example/live/playlist?token=abc","tag":"video","mime":"application/vnd.apple.mpegurl"},
+            {"url":"https://cdn.example/files/track?id=7","tag":"audio","mime":"audio/mpeg"}
+        ]}""")
+        assertEquals(2, r.items.size)
+        assertEquals(DetectedMedia.Kind.STREAM, r.items[0].kind)
+        assertFalse(r.items[0].downloadable)
+        assertEquals(DetectedMedia.Kind.AUDIO, r.items[1].kind)
+        assertTrue(r.items[1].downloadable)
+        assertEquals("audio/mpeg", r.items[1].mimeType)
+    }
+
     @Test fun extensionlessVideoTagUsesTag() {
         val r = MediaDetect.parse("""{"items":[{"url":"https://x.example/watch/123","tag":"video"}]}""")
         assertEquals(DetectedMedia.Kind.VIDEO, r.items.single().kind)
