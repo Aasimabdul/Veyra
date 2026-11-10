@@ -530,12 +530,13 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
 
         if (Build.VERSION.SDK_INT >= 29) {
             val resolver = context.contentResolver
-            val occupied = (items.filter { it !== item }.map { it.name } +
+            var occupied = (items.filter { it !== item }.map { it.name } +
                 (publicDir().listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()) +
                 (privateDir(context).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
             var candidate = DownloadNaming.uniqueName(item.name, occupied)
             while (contentUriNameExists(candidate)) {
-                candidate = DownloadNaming.uniqueName(candidate, occupied + candidate)
+                occupied = occupied + candidate
+                candidate = DownloadNaming.uniqueName(item.name, occupied)
             }
             item.name = candidate
             val values = ContentValues().apply {
