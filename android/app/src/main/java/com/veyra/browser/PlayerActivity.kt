@@ -511,7 +511,7 @@ class PlayerActivity : AppCompatActivity() {
         val mediaItem = MediaItem.Builder().setUri(uri).apply {
             val requestedMime = intent?.getStringExtra("mime_type")?.substringBefore(';')?.trim()
             val playbackMime = when (requestedMime?.lowercase(java.util.Locale.ROOT)) {
-                "application/vnd.apple.mpegurl", "audio/mpegurl" -> MimeTypes.APPLICATION_M3U8
+                "application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl" -> MimeTypes.APPLICATION_M3U8
                 "application/dash+xml" -> MimeTypes.APPLICATION_MPD
                 else -> requestedMime
             }
