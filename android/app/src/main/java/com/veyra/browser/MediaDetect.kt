@@ -39,6 +39,22 @@ object MediaDetect {
         else -> null
     }
 
+    /** MIME metadata can identify extensionless HLS/DASH manifests and direct audio/video. */
+    fun kindFromMime(rawMime: String): DetectedMedia.Kind? {
+        val mime = rawMime.substringBefore(';').trim().lowercase(Locale.ROOT)
+        return when (mime) {
+            "application/vnd.apple.mpegurl",
+            "application/x-mpegurl",
+            "audio/mpegurl",
+            "application/dash+xml" -> DetectedMedia.Kind.STREAM
+            "audio/mpeg", "audio/mp4", "audio/aac", "audio/ogg", "audio/opus",
+            "audio/wav", "audio/x-wav", "audio/flac", "audio/webm" -> DetectedMedia.Kind.AUDIO
+            "video/mp4", "video/webm", "video/quicktime", "video/3gpp",
+            "video/x-matroska", "video/ogg" -> DetectedMedia.Kind.VIDEO
+            else -> null
+        }
+    }
+
     fun parse(json: String): Result {
         val root = try { JSONObject(json) } catch (_: Exception) { return Result(emptyList(), 0) }
         var unsupported = root.optInt("blobs", 0).coerceAtLeast(0)
@@ -53,7 +69,9 @@ object MediaDetect {
                     continue
                 }
                 val tag = o.optString("tag")
-                val kind = kindFromExtension(url) ?: when (tag) {
+                // URL paths may be signed or extensionless. Prefer explicit manifest/file
+                // extension, then source MIME, and only then the DOM element's broad tag.
+                val kind = kindFromExtension(url) ?: kindFromMime(o.optString("mime")) ?: when (tag) {
                     "video" -> DetectedMedia.Kind.VIDEO
                     "audio" -> DetectedMedia.Kind.AUDIO
                     else -> null
