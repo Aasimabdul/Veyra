@@ -4,7 +4,7 @@ import org.json.JSONObject
 import java.util.Locale
 
 /** One playable / downloadable media file found on a web page. */
-data class DetectedMedia(val url: String, val kind: Kind, val title: String) {
+data class DetectedMedia(val url: String, val kind: Kind, val title: String, val mimeType: String? = null) {
     enum class Kind { VIDEO, AUDIO, STREAM }
 
     /** Streams (HLS playlists) can be played but not saved as a single file. */
@@ -77,7 +77,7 @@ object MediaDetect {
                     else -> null
                 } ?: continue
                 if (found.size >= MAX_ITEMS && url !in found) continue
-                found.putIfAbsent(url, DetectedMedia(url, kind, o.optString("title").trim().take(120)))
+                found.putIfAbsent(url, DetectedMedia(url, kind, o.optString("title").trim().take(120), o.optString("mime").trim().ifBlank { null }))
             }
         }
         return Result(found.values.toList(), unsupported)
