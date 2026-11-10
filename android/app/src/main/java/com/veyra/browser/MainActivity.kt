@@ -2010,7 +2010,10 @@ class MainActivity : AppCompatActivity() {
             ))
         }
         files.forEach { file ->
-            val media = MediaDetect.kindFromExtension(file.name).let { it == DetectedMedia.Kind.VIDEO || it == DetectedMedia.Kind.AUDIO }
+            val fileMime = downloads.items.firstOrNull { it.inPrivateFolder && it.name == file.name }?.mime
+                ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+            val media = DownloadNaming.isMediaMime(fileMime) ||
+                MediaDetect.kindFromExtension(file.name).let { it == DetectedMedia.Kind.VIDEO || it == DetectedMedia.Kind.AUDIO }
             val delete = iconButton(Icons.TRASH, "Delete ${file.name}") {
                 showConfirmSheet("Delete this file?", file.name, "Delete") {
                     file.delete()
@@ -2024,7 +2027,7 @@ class MainActivity : AppCompatActivity() {
                 file.name, DownloadNaming.formatBytes(file.length()), delete
             ) {
                 val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
-                if (media) playMedia(uri, file.name)
+                if (media) playMedia(uri, file.name, fileMime)
                 else try {
                     startActivity(Intent(Intent.ACTION_VIEW).apply {
                         data = uri
@@ -2099,7 +2102,7 @@ class MainActivity : AppCompatActivity() {
             val playable = DownloadNaming.isMediaMime(item.mime) || MediaDetect.kindFromExtension(item.name)
                 .let { it == DetectedMedia.Kind.VIDEO || it == DetectedMedia.Kind.AUDIO }
             if (uri != null && playable) sheet.addView(sheetAction(Icons.PLAY, "Play in Veyra") {
-                dialog.dismiss(); playMedia(uri, item.name)
+                dialog.dismiss(); playMedia(uri, item.name, item.mime)
             }, matchWrap())
             if (uri != null) sheet.addView(sheetAction(Icons.SHARE, "Share") { dialog.dismiss(); shareUri(uri, item.mime) }, matchWrap())
             sheet.addView(sheetAction(Icons.EDIT, "Rename") {
@@ -2132,8 +2135,9 @@ class MainActivity : AppCompatActivity() {
             val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
             sheet.addView(sheetAction(Icons.SHARE, "Share") {
                 dialog.dismiss()
-                shareUri(uri, android.webkit.MimeTypeMap.getSingleton()
-                    .getMimeTypeFromExtension(file.extension.lowercase()))
+                val itemMime = downloads.items.firstOrNull { it.inPrivateFolder && it.name == file.name }?.mime
+                    ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+                shareUri(uri, itemMime)
             }, matchWrap())
             sheet.addView(sheetAction(Icons.EDIT, "Rename") {
                 dialog.dismiss()
