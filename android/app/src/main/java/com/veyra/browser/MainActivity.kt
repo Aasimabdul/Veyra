@@ -635,7 +635,7 @@ class MainActivity : AppCompatActivity() {
             }
             pill.addView(icon(item.paths, if (active) Palette.ACCENT else Palette.MUTED, 22))
             slot.addView(pill, FrameLayout.LayoutParams(dp(50), dp(40), Gravity.CENTER))
-            nav.addView(slot, lp(dp(58), dp(58)))
+            nav.addView(slot, lp(0, dp(58), 1f))
         }
         attachBottomBar(nav)
     }
@@ -718,7 +718,7 @@ class MainActivity : AppCompatActivity() {
                 when (vpnManager.status) {
                     VpnManager.Status.ON -> vpnManager.disconnect()
                     VpnManager.Status.CONNECTING -> Toast.makeText(this@MainActivity, "VPN is connecting…", Toast.LENGTH_SHORT).show()
-                    else -> if (vpnManager.hasConfig()) startVpn() else show("vpn")
+                    else -> if (vpnManager.hasConfig()) startVpn() else setupFreeVpnAndConnect()
                 }
                 postDelayed({
                     if (currentPage == "browse") showBrowser()
@@ -842,15 +842,17 @@ class MainActivity : AppCompatActivity() {
         dockHidden = false
         bar.alpha = 1f
         bar.translationY = 0f
+        // Main nav sits exactly on the page gutter (same edge as the cards); the browser dock is
+        // full-bleed, so it keeps a small fixed margin. Both get the same vertical spacing.
         root.addView(bar, lp(
-            if (matchWidth) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
             if (matchWidth) ViewGroup.LayoutParams.WRAP_CONTENT else dp(58)
         ).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = dp(if (matchWidth) 6 else 8)
-            bottomMargin = dp(if (matchWidth) 8 else 10)
-            leftMargin = dp(if (matchWidth) 12 else 20)
-            rightMargin = dp(if (matchWidth) 12 else 20)
+            topMargin = dp(8)
+            bottomMargin = dp(10)
+            leftMargin = dp(if (matchWidth) 16 else 0)
+            rightMargin = dp(if (matchWidth) 16 else 0)
         })
     }
 
@@ -2599,6 +2601,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** One tap: create a free WARP profile on this device, then ask for VPN permission and connect. */
+    private fun setupFreeVpnAndConnect() {
+        Toast.makeText(this, "Setting up free VPN…", Toast.LENGTH_SHORT).show()
+        VpnManager.get(this).provisionFree { error ->
+            if (error == null) startVpn()
+            else Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+            if (currentPage == "vpn") showVpn()
+        }
+    }
+
     private fun startVpn() {
         val vpn = VpnManager.get(this)
         val intent = try { vpn.permissionIntent() } catch (_: Exception) { null }
@@ -2764,7 +2776,7 @@ class MainActivity : AppCompatActivity() {
                 status == VpnManager.Status.DISCONNECTING -> "Disconnecting the tunnel and releasing its resources…"
                 status == VpnManager.Status.ERROR -> vpn.lastError ?: "Something went wrong."
                 vpn.hasConfig() -> "Tap Connect to start the tunnel."
-                else -> "Import a WireGuard profile from a provider that offers a free server in your preferred country."
+                else -> "Tap Turn on free VPN for one-tap protection, or import a WireGuard profile for a specific country."
             },
             13f, Palette.MUTED
         ).apply { setLineSpacing(0f, 1.2f) })
@@ -2772,7 +2784,11 @@ class MainActivity : AppCompatActivity() {
 
         if (!vpn.hasConfig() && status != VpnManager.Status.CONNECTING) {
             page.addView(
-                textButton("Find free VPN profiles", primary = true) { showFreeVpnProvidersSheet() },
+                textButton("Turn on free VPN", primary = true) { setupFreeVpnAndConnect() },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) }
+            )
+            page.addView(
+                textButton("Choose a country (Proton profile)") { showFreeVpnProvidersSheet() },
                 lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
             )
         }
@@ -2782,7 +2798,7 @@ class MainActivity : AppCompatActivity() {
             neu(this, 22, Depth.CARD)
             addView(label("Use a real provider profile", 15f, Palette.TEXT, 1))
             addView(label(
-                "Cloudflare WARP does not let Veyra choose a country, and its consumer provisioning interface is not a supported integration. Veyra therefore uses imported WireGuard profiles for real country-specific servers. Use a profile supplied by a provider you trust and check its free-plan country limits.",
+                "Turn on free VPN uses Cloudflare WARP: one tap, no account, but you cannot pick a country and Cloudflare's sign-up interface is unofficial, so it may stop working. For a specific country, import a WireGuard profile from a provider you trust.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) })
         }
