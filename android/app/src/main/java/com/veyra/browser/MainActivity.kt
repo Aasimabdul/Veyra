@@ -1431,12 +1431,29 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString("history", array.toString()).apply()
     }
 
+    /** Prefer an actual audio/video MIME type; ignore generic octet-stream when a filename is known. */
+    private fun resolvePlaybackMime(name: String?, uri: Uri, rawMime: String?): String? {
+        val mime = rawMime?.substringBefore(';')?.trim()?.lowercase(java.util.Locale.ROOT)
+        if (mime != null && (
+                mime.startsWith("video/") || mime.startsWith("audio/") ||
+                    mime == "application/vnd.apple.mpegurl" ||
+                    mime == "application/x-mpegurl" ||
+                    mime == "audio/mpegurl" ||
+                    mime == "application/dash+xml"
+            )
+        ) return mime
+        val sourceName = name?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment.orEmpty()
+        val extension = sourceName.substringBefore('?').substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
+        return android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+    }
+
     private fun playMedia(uri: Uri, name: String?, mimeType: String? = null) {
+        val playbackMime = resolvePlaybackMime(name, uri, mimeType)
         startActivity(Intent(this, PlayerActivity::class.java).apply {
             data = uri
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             putExtra("name", name)
-            if (!mimeType.isNullOrBlank()) putExtra("mime_type", mimeType)
+            if (!playbackMime.isNullOrBlank()) putExtra("mime_type", playbackMime)
         })
     }
 
