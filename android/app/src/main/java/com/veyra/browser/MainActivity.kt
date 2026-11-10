@@ -1773,11 +1773,13 @@ class MainActivity : AppCompatActivity() {
             }
             if (item.state == DlState.DONE) {
                 action("Open / Play", "Open the saved file") { openDownload(item) }
-                if (!item.inPrivateFolder) {
-                    action("Share", "Share using a temporary content URI") { shareDownload(item) }
-                    action("Rename", "Keep the filename safe and unique") { showRenameDownloadSheet(item) }
-                    if (!item.isPrivate) {
-                        action("Move to Private Folder", "Hide the file from public Downloads") {
+                action("Share", "Share using a temporary content URI") { shareDownload(item) }
+                action("Rename", "Keep the filename safe and unique") {
+                    if (item.inPrivateFolder) showRenamePrivateFileSheet(java.io.File(DownloadCenter.privateDir(this), item.name))
+                    else showRenameDownloadSheet(item)
+                }
+                if (!item.inPrivateFolder && !item.isPrivate) {
+                    action("Move to Private Folder", "Hide the file from public Downloads") {
                             val moved = downloads.moveToPrivate(item)
                             Toast.makeText(
                                 this,
@@ -1786,7 +1788,6 @@ class MainActivity : AppCompatActivity() {
                             ).show()
                             if (moved && currentPage == "downloads") refreshDownloads()
                         }
-                    }
                 } else if (item.privateFolder && !item.isPrivate) {
                     action("Move out of Private Folder", "Copy to Downloads before removing the private copy") {
                         val moved = downloads.moveOutOfPrivate(item)
@@ -2119,23 +2120,204 @@ class MainActivity : AppCompatActivity() {
                     showPrivateFolder()
                 }
             }
-            page.addView(listRow(
+            val fileRow = listRow(
                 well(icon(if (media) Icons.PLAY else Icons.FILE, Palette.ACCENT, 20)),
                 file.name, DownloadNaming.formatBytes(file.length()), delete
-            ) {
-                val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
-                if (media) playMedia(uri, file.name)
-                else try {
-                    startActivity(Intent(Intent.ACTION_VIEW).apply {
-                        data = uri
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    })
-                } catch (_: Exception) {
-                    Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
-                }
-            }, matchWrap().apply { bottomMargin = dp(16) })
+            ) { openPrivateFile(file) }
+            fileRow.setOnLongClickListener { showPrivateFileActions(file); true }
+            page.addView(fileRow, matchWrap().apply { bottomMargin = dp(16) })
         }
         addMainNav("downloads")
+    }
+
+    private fun openPrivateFile(file: java.io.File) {
+        if (!file.isFile) {
+            Toast.makeText(this, "The private file is unavailable", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+        val kind = MediaDetect.kindFromExtension(file.name)
+        if (kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO) {
+            playMedia(uri, file.name)
+        } else try {
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, java.net.URLConnection.guessContentTypeFromName(file.name) ?: "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+        } catch (_: Exception) {
+            Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showPrivateFileActions(file: java.io.File) {
+        if (!file.isFile) return
+        val savedItem = downloads.items.firstOrNull {
+            it.state == DlState.DONE && it.inPrivateFolder && it.name == file.name
+        }
+        if (savedItem != null) {
+            showDownloadActions(savedItem)
+            return
+        }
+        showSheet { sheet, dialog ->
+            sheet.addView(label(file.name, 17f, Palette.TEXT, 1).apply {
+                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, matchWrap())
+            sheet.addView(label("${DownloadNaming.formatBytes(file.length())} · Private app storage · Not encrypted", 12f, Palette.MUTED)
+                .apply { setPadding(0, dp(6), 0, dp(14)) }, matchWrap())
+            fun action(title: String, description: String, paths: List<String> = Icons.FILE, run: () -> Unit) {
+                sheet.addView(listRow(well(icon(paths, Palette.ACCENT, 18)), title, description) {
+                    dialog.dismiss()
+                    run()
+                }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(8)
+                })
+            }
+            action("Open / Play", "Open with Veyra or another app", Icons.PLAY) { openPrivateFile(file) }
+            action("Share", "Share only after choosing a destination", Icons.SHARE) { sharePrivateFile(file) }
+            action("Rename", "Rename without overwriting another private file", Icons.EDIT) { showRenamePrivateFileSheet(file) }
+            action("Move out of Private Folder", "Copy to Downloads, then remove the private copy", Icons.DOWNLOAD) {
+                val moved = movePrivateFileOut(file)
+                Toast.makeText(this, if (moved) "Moved to Downloads" else "Could not safely move this file", Toast.LENGTH_LONG).show()
+                if (moved) showPrivateFolder()
+            }
+            action("File details", "Filename, size and timestamps", Icons.INFO) { showPrivateFileDetails(file) }
+            action("Delete", "Permanently remove this private file", Icons.TRASH) {
+                showConfirmSheet("Delete this private file?", file.name, "Delete") {
+                    val deleted = file.delete()
+                    if (deleted) downloads.items.toList().filter { it.inPrivateFolder && it.name == file.name }
+                        .forEach { downloads.delete(it, false) }
+                    Toast.makeText(this, if (deleted) "File deleted" else "Could not delete the file", Toast.LENGTH_LONG).show()
+                    showPrivateFolder()
+                }
+            }
+        }
+    }
+
+    private fun sharePrivateFile(file: java.io.File) {
+        if (!file.isFile) return
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+            val share = Intent(Intent.ACTION_SEND).apply {
+                type = java.net.URLConnection.guessContentTypeFromName(file.name) ?: "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = android.content.ClipData.newRawUri(file.name, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(share, "Share private file"))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Could not share this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showRenamePrivateFileSheet(file: java.io.File) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Rename private file", 18f, Palette.TEXT, 1), matchWrap())
+            val input = EditText(this).apply {
+                setText(file.name)
+                setSingleLine(true)
+                setTextColor(Palette.TEXT)
+                setHintTextColor(Palette.MUTED)
+                setPadding(dp(18), 0, dp(18), 0)
+                neu(this, 24, Depth.FIELD, inset = true)
+            }
+            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
+                topMargin = dp(16); bottomMargin = dp(18)
+            })
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Cancel") { dialog.dismiss() })
+            actions.addView(textButton("Save", primary = true) {
+                val raw = input.text.toString().trim()
+                if (raw.isBlank() || !file.isFile) {
+                    Toast.makeText(this, "Enter a valid filename", Toast.LENGTH_SHORT).show()
+                    return@textButton
+                }
+                val safe = DownloadNaming.fileName("filename=\"$raw\"", file.name)
+                val ext = file.name.substringAfterLast('.', "").takeIf { it.isNotBlank() }
+                val candidate = if ('.' !in safe && ext != null) "$safe.$ext" else safe
+                val reserved = (downloads.takenNames() - file.name).toMutableSet().apply {
+                    file.parentFile?.listFiles()?.filter { it.isFile && it.name != file.name }?.forEach { add(it.name) }
+                }
+                val newName = DownloadNaming.uniqueName(candidate, reserved)
+                val target = java.io.File(file.parentFile, newName)
+                if (target.exists() || !file.renameTo(target)) {
+                    Toast.makeText(this, "Could not rename the file", Toast.LENGTH_LONG).show()
+                } else {
+                    dialog.dismiss()
+                    showPrivateFolder()
+                }
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+            sheet.addView(actions, matchWrap())
+        }
+    }
+
+    private fun movePrivateFileOut(file: java.io.File): Boolean {
+        val privateRoot = DownloadCenter.privateDir(this).canonicalFile
+        if (!file.isFile || file.canonicalFile.parentFile != privateRoot) return false
+        val publicNames = downloads.items.filter { !it.inPrivateFolder }.map { it.name }.toSet()
+        val name = DownloadNaming.uniqueName(file.name, publicNames)
+        val mime = java.net.URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream"
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.Downloads.MIME_TYPE, mime)
+                put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/Veyra")
+                put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+            try {
+                contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                    ?: throw java.io.IOException("Could not write file")
+                val sizeMatches = contentResolver.openInputStream(uri)?.use { input ->
+                    var copied = 0L
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        copied += count
+                    }
+                    copied == file.length()
+                } ?: false
+                if (!sizeMatches) throw java.io.IOException("The copied file size did not match")
+                val published = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                }
+                if (contentResolver.update(uri, published, null, null) <= 0) throw java.io.IOException("Could not publish the file")
+                if (!file.delete()) throw java.io.IOException("Could not remove the private source")
+                return true
+            } catch (_: Exception) {
+                runCatching { contentResolver.delete(uri, null, null) }
+                return false
+            }
+        }
+        val targetDir = java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra").apply { mkdirs() }
+        val target = java.io.File(targetDir, name)
+        return try {
+            file.copyTo(target, overwrite = false)
+            if (target.length() != file.length() || !file.delete()) {
+                target.delete()
+                false
+            } else true
+        } catch (_: Exception) {
+            target.delete()
+            false
+        }
+    }
+
+    private fun showPrivateFileDetails(file: java.io.File) {
+        showSheet { sheet ->
+            sheet.addView(label("File details", 18f, Palette.TEXT, 1), matchWrap())
+            val rows = listOf(
+                "Name" to file.name,
+                "Size" to DownloadNaming.formatBytes(file.length()),
+                "Type" to (java.net.URLConnection.guessContentTypeFromName(file.name) ?: "Unknown"),
+                "Location" to "Veyra private app storage (not encrypted)",
+                "Modified" to DateFormat.getDateTimeInstance().format(Date(file.lastModified()))
+            )
+            rows.forEach { (name, value) ->
+                sheet.addView(label(name, 11f, Palette.MUTED).apply { setPadding(0, dp(10), 0, dp(2)) }, matchWrap())
+                sheet.addView(label(value, 14f, Palette.TEXT).apply { maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END }, matchWrap())
+            }
+        }
     }
 
     private val streamingHosts = listOf(
