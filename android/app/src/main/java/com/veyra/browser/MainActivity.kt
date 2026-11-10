@@ -2203,7 +2203,7 @@ class MainActivity : AppCompatActivity() {
                 val localDir = if (item.inPrivateFolder) DownloadCenter.privateDir(this)
                     else java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra")
                 val local = java.io.File(localDir, item.name)
-                if (local.isFile) android.text.format.DateFormat.getDateTimeInstance().format(java.util.Date(local.lastModified()))
+                if (local.isFile) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(local.lastModified()))
                 else {
                     val uri = item.savedUri?.let { Uri.parse(it) }
                     val value = if (uri != null && uri.scheme == "content") {
@@ -2212,7 +2212,7 @@ class MainActivity : AppCompatActivity() {
                                 if (cursor.moveToFirst()) cursor.getLong(0).takeIf { it > 0 }?.times(1000L) else null
                             }
                     } else null
-                    value?.let { android.text.format.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "Unknown"
+                    value?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "Unknown"
                 }
             }.getOrDefault("Unknown")
             val fields = listOf(
@@ -2245,7 +2245,7 @@ class MainActivity : AppCompatActivity() {
                 "Size" to DownloadNaming.formatBytes(file.length()),
                 "Type" to mime,
                 "Location" to "Veyra Private folder (app storage, not encrypted)",
-                "Last modified" to android.text.format.DateFormat.getDateTimeInstance().format(java.util.Date(file.lastModified()))
+                "Last modified" to java.text.DateFormat.getDateTimeInstance().format(java.util.Date(file.lastModified()))
             )
             fields.forEach { (name, value) ->
                 sheet.addView(label(name, 11f, Palette.MUTED).apply { setPadding(0, dp(10), 0, dp(2)) }, matchWrap())
