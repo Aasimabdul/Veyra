@@ -18,15 +18,18 @@
     var items = [];
     var blobs = 0;
     adMediaSkipped = 0;
-    function add(u, tag, title) {
+    function add(u, tag, title, mime) {
       if (!u) return;
       if (u.indexOf("blob:") === 0 || u.indexOf("mediastream:") === 0) {
         if (!seenBlobs[u]) { seenBlobs[u] = true; blobs++; }
         return;
       }
       var a = abs(u);
-      if (a && !known[a]) known[a] = { url: a, tag: tag, title: title || "" };
-      else if (a && known[a] && !known[a].title && title) known[a].title = title;
+      if (a && !known[a]) known[a] = { url: a, tag: tag, title: title || "", mime: mime || "" };
+      else if (a && known[a]) {
+        if (!known[a].title && title) known[a].title = title;
+        if (!known[a].mime && mime) known[a].mime = mime;
+      }
     }
     function isYoutubeAdShowing() {
       if (!/youtube\.com$|youtube-nocookie\.com$/.test(location.hostname)) return false;
@@ -41,9 +44,11 @@
       var el = els[i];
       if (isAdVideo(el)) { adMediaSkipped++; continue; }
       var tag = el.tagName.toLowerCase();
-      add(el.currentSrc || el.getAttribute("src"), tag, title);
+      add(el.currentSrc || el.getAttribute("src"), tag, title, el.getAttribute("type") || "");
       var sources = el.querySelectorAll("source[src]");
-      for (var j = 0; j < sources.length; j++) add(sources[j].getAttribute("src"), tag, title);
+      for (var j = 0; j < sources.length; j++) {
+        add(sources[j].getAttribute("src"), tag, title, sources[j].getAttribute("type") || "");
+      }
       ["data-src", "data-video-src", "data-url"].forEach(function (attr) {
         add(el.getAttribute(attr), tag, title);
       });
