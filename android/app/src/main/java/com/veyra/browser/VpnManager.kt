@@ -25,7 +25,7 @@ import javax.crypto.spec.GCMParameterSpec
  * non-exportable Android Keystore key and is never written to logs.
  */
 class VpnManager private constructor(context: Context) {
-    enum class Status { OFF, CONNECTING, ON, ERROR }
+    enum class Status { OFF, CONNECTING, ON, DISCONNECTING, ERROR }
 
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -90,7 +90,7 @@ class VpnManager private constructor(context: Context) {
     }
 
     fun deleteConfig() {
-        if (status == Status.ON || status == Status.CONNECTING) disconnect()
+        if (status != Status.OFF) disconnect()
         file.delete()
         lastError = null
         notifyChanged()
@@ -142,11 +142,19 @@ class VpnManager private constructor(context: Context) {
     }
 
     fun disconnect() {
-        val engine = backend ?: return
+        val engine = backend
+        if (engine == null) {
+            fail(lastError ?: "The VPN engine is unavailable, so Veyra cannot confirm tunnel shutdown.")
+            return
+        }
+        status = Status.DISCONNECTING
+        lastError = null
+        notifyChanged()
         Thread {
             try {
                 engine.setState(tunnel, Tunnel.State.DOWN, null)
                 status = Status.OFF
+                lastError = null
             } catch (e: Throwable) {
                 status = Status.ERROR
                 lastError = "Could not disconnect cleanly: ${e.message ?: e.javaClass.simpleName}"
@@ -157,7 +165,7 @@ class VpnManager private constructor(context: Context) {
 
     /** Re-reads the real tunnel state (the service can outlive the Activity). */
     fun refresh() {
-        if (status == Status.CONNECTING) return
+        if (status == Status.CONNECTING || status == Status.DISCONNECTING) return
         val previousStatus = status
         val previousError = lastError
         try {
