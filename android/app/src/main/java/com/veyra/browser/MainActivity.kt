@@ -2511,7 +2511,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupFreeVpn() {
-        Toast.makeText(this, "Setting up the free VPN...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Trying experimental WARP setup…", Toast.LENGTH_SHORT).show()
         VpnManager.get(this).provisionFree { error ->
             if (error == null) startVpn() else Toast.makeText(this, error, Toast.LENGTH_LONG).show()
         }
@@ -2568,6 +2568,7 @@ class MainActivity : AppCompatActivity() {
             when (status) {
                 VpnManager.Status.ON -> "Connected"
                 VpnManager.Status.CONNECTING -> "Connecting…"
+                VpnManager.Status.DISCONNECTING -> "Disconnecting…"
                 VpnManager.Status.ERROR -> "Connection failed"
                 VpnManager.Status.OFF -> if (vpn.hasConfig()) "Off" else "No config yet"
             },
@@ -2576,9 +2577,10 @@ class MainActivity : AppCompatActivity() {
         card.addView(label(
             when {
                 status == VpnManager.Status.ON -> "All apps on this device use the tunnel while it is on."
+                status == VpnManager.Status.DISCONNECTING -> "Disconnecting the tunnel and releasing its resources…"
                 status == VpnManager.Status.ERROR -> vpn.lastError ?: "Something went wrong."
                 vpn.hasConfig() -> "Tap Connect to start the tunnel."
-                else -> "Turn on the free VPN with one tap, or import your own WireGuard profile."
+                else -> "Try experimental WARP setup, or import a WireGuard profile from a provider you trust."
             },
             13f, Palette.MUTED
         ).apply { setLineSpacing(0f, 1.2f) })
@@ -2594,20 +2596,25 @@ class MainActivity : AppCompatActivity() {
         val countryNote = column().apply {
             setPadding(dp(18), dp(16), dp(18), dp(16))
             neu(this, 22, Depth.CARD)
-            addView(label("About the free VPN", 15f, Palette.TEXT, 1))
+            addView(label("About the experimental free VPN", 15f, Palette.TEXT, 1))
             addView(label(
-                "The free VPN uses Cloudflare WARP. It encrypts your traffic and hides it from your Wi-Fi or mobile network, but it does not let you choose a country or change your location. " +
-                    "It is set up through Cloudflare's unofficial consumer API, so it can stop working on some networks. For a specific country, import a WireGuard profile from a provider that offers one.",
+                "The one-tap option attempts to provision Cloudflare WARP using an unofficial, undocumented consumer API. It may stop working or fail on some networks, and Veyra cannot guarantee this provider interface. It does not let you choose a country. For a more predictable setup, import a WireGuard profile from a provider or your own server.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) })
         }
         page.addView(countryNote, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
 
         if (vpn.hasConfig()) {
-            val busy = status == VpnManager.Status.CONNECTING
+            val busy = status == VpnManager.Status.CONNECTING || status == VpnManager.Status.DISCONNECTING
             val on = status == VpnManager.Status.ON
+            val actionLabel = when {
+                on -> "Disconnect"
+                status == VpnManager.Status.DISCONNECTING -> "Disconnecting…"
+                status == VpnManager.Status.CONNECTING -> "Connecting…"
+                else -> "Connect"
+            }
             page.addView(
-                textButton(if (on) "Disconnect" else if (busy) "Connecting…" else "Connect", primary = !on) {
+                textButton(actionLabel, primary = !on) {
                     if (busy) return@textButton
                     if (on) vpn.disconnect() else startVpn()
                 },
