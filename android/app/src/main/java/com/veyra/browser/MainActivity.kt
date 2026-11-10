@@ -1746,8 +1746,11 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(18), dp(14), dp(18), dp(14))
             neu(this, 24, Depth.CARD, pressable = item.state == DlState.DONE)
             if (item.state == DlState.DONE) setOnClickListener {
-                if (DownloadNaming.isMediaMime(item.mime) && item.savedUri != null) {
-                    playMedia(Uri.parse(item.savedUri), item.name)
+                val kind = MediaDetect.kindFromExtension(item.name)
+                val playable = DownloadNaming.isMediaMime(item.mime) ||
+                    kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO
+                if (playable && item.savedUri != null) {
+                    playMedia(Uri.parse(item.savedUri), item.name, item.mime)
                     return@setOnClickListener
                 }
                 val intent = downloads.openIntent(item)
