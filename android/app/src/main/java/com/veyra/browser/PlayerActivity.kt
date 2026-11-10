@@ -31,6 +31,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -399,7 +400,10 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun displayTitle(): String {
-        val raw = intent?.getStringExtra("title")?.takeIf { it.isNotBlank() }
+        // MainActivity passes the actual filename as "name"; content URIs may otherwise
+        // expose only an opaque MediaStore row ID in the player header.
+        val raw = intent?.getStringExtra("name")?.takeIf { it.isNotBlank() }
+            ?: intent?.getStringExtra("title")?.takeIf { it.isNotBlank() }
             ?: source?.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
             ?: "Now playing"
         return Uri.decode(raw).substringAfterLast(':').take(72)
@@ -499,7 +503,16 @@ class PlayerActivity : AppCompatActivity() {
         val exo = ExoPlayer.Builder(this, factory).build()
         player = exo
         playerView.player = exo
-        exo.setMediaItem(MediaItem.fromUri(uri))
+        val mediaItem = MediaItem.Builder().setUri(uri).apply {
+            val requestedMime = intent?.getStringExtra("mime_type")?.substringBefore(';')?.trim()
+            val playbackMime = when (requestedMime?.lowercase(java.util.Locale.ROOT)) {
+                "application/vnd.apple.mpegurl", "audio/mpegurl" -> MimeTypes.APPLICATION_M3U8
+                "application/dash+xml" -> MimeTypes.APPLICATION_MPD
+                else -> requestedMime
+            }
+            if (!playbackMime.isNullOrBlank()) setMimeType(playbackMime)
+        }.build()
+        exo.setMediaItem(mediaItem)
         exo.setPlaybackSpeed(speeds[speedIndex])
         if (startAt > 0) exo.seekTo(startAt)
         exo.addListener(object : Player.Listener {
