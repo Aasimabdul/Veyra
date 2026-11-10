@@ -180,6 +180,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, backCallback)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         themeKey = prefs.getString("theme", Themes.SYSTEM) ?: Themes.SYSTEM
         strictProtection = prefs.getBoolean("protection_strict", false)
@@ -312,20 +313,28 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        when {
-            currentPage == "lock" -> super.onBackPressed()
-            websiteFullscreen -> cur?.session?.exitFullScreen()
-            currentPage == "browse" && canGoBack -> cur?.session?.goBack()
-            currentPage == "browse" -> show("home")
-            screenBackStack.isNotEmpty() -> {
-                val destination = screenBackStack.removeLast()
-                restoringScreen = true
-                try { show(destination) } finally { restoringScreen = false }
+    /** Predictive back (targetSdk 36) never calls onBackPressed(), so back is handled by a dispatcher callback. */
+    private val backCallback = object : androidx.activity.OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            when {
+                currentPage == "lock" -> passBackToSystem()
+                websiteFullscreen -> cur?.session?.exitFullScreen()
+                currentPage == "browse" && canGoBack -> cur?.session?.goBack()
+                currentPage == "browse" -> show("home")
+                screenBackStack.isNotEmpty() -> {
+                    val destination = screenBackStack.removeLast()
+                    restoringScreen = true
+                    try { show(destination) } finally { restoringScreen = false }
+                }
+                currentPage != "home" -> show("home")
+                else -> passBackToSystem()
             }
-            currentPage != "home" -> show("home")
-            else -> super.onBackPressed()
+        }
+
+        private fun passBackToSystem() {
+            isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+            isEnabled = true
         }
     }
 
@@ -1022,8 +1031,50 @@ class MainActivity : AppCompatActivity() {
         }
         // The page fills the whole content area; the address pill lives in the bottom dock.
         contentArea.addView(geckoView, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        mediaBanner = null
+        updateMediaBanner()
         addBrowserBar()
         revealBrowserChrome()
+    }
+
+    private var mediaBanner: View? = null
+    private val dismissedBanners = HashSet<String>()
+
+    /** UC/PlayIt-style prompt: when the page has playable media, offer Play (stream) or Download. */
+    private fun updateMediaBanner() {
+        if (currentPage != "browse") return
+        mediaBanner?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        mediaBanner = null
+        val tab = cur ?: return
+        if (tab.media.isEmpty() || websiteFullscreen || tab.url in dismissedBanners) return
+        val first = tab.media.first()
+        val count = tab.media.size
+        val banner = row().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(10), dp(10), dp(10))
+            neu(this, 20, Depth.CARD)
+        }
+        banner.addView(icon(Icons.PLAY, Palette.ACCENT, 18, filled = true))
+        banner.addView(label(
+            if (count == 1) "Video found" else "$count videos found", 14f, Palette.TEXT, 1
+        ).apply { setPadding(dp(10), 0, dp(8), 0) }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        banner.addView(textButton("Play", primary = true) {
+            if (count == 1) playMedia(Uri.parse(first.url), first.title) else showMediaSheet()
+        })
+        if (tab.media.any { it.downloadable }) {
+            banner.addView(textButton("Download") {
+                val only = tab.media.singleOrNull()
+                if (only != null && only.downloadable) startUrlDownload(only.url, tab.isPrivate) else showMediaSheet()
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
+        }
+        banner.addView(iconButton(Icons.CLOSE, "Dismiss", Palette.MUTED, 34, 12, false) {
+            dismissedBanners.add(tab.url)
+            updateMediaBanner()
+        }, lp(dp(34), dp(34)).apply { leftMargin = dp(4) })
+        mediaBanner = banner
+        contentArea.addView(banner, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = dp(12); rightMargin = dp(12); topMargin = dp(8); bottomMargin = dp(8)
+        })
     }
 
     private fun navigate(raw: String) {
@@ -1087,6 +1138,7 @@ class MainActivity : AppCompatActivity() {
                 tab.blocked = 0
                 tab.media = emptyList()
                 tab.unsupportedMedia = 0
+                if (tab === cur) mediaBanner?.let { (it.parent as? ViewGroup)?.removeView(it); mediaBanner = null }
                 if (!tab.isPrivate && history.lastOrNull()?.url != url) {
                     history.add(HistoryEntry(url, "", System.currentTimeMillis()))
                     persistHistory()
@@ -1671,6 +1723,7 @@ class MainActivity : AppCompatActivity() {
                 catch (_: Exception) { Toast.makeText(this@MainActivity, "No app can open this file", Toast.LENGTH_SHORT).show() }
             }
         }
+        if (item.state == DlState.DONE) card.setOnLongClickListener { showDownloadActions(item); true }
         val top = row()
         val iconPaths = if (item.state == DlState.FAILED) Icons.INFO else Icons.DOWNLOAD
         top.addView(well(icon(iconPaths, if (item.state == DlState.FAILED) Palette.MUTED else Palette.ACCENT, 20)))
@@ -1972,9 +2025,132 @@ class MainActivity : AppCompatActivity() {
                 } catch (_: Exception) {
                     Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
                 }
-            }, matchWrap().apply { bottomMargin = dp(16) })
+            }.also { row -> row.setOnLongClickListener { showPrivateFileActions(file); true } },
+                matchWrap().apply { bottomMargin = dp(16) })
         }
         addMainNav("downloads")
+    }
+
+    private fun shareUri(uri: Uri, mime: String?) {
+        try {
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = mime?.takeIf { it.isNotBlank() } ?: "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "Share"))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Nothing can receive this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** One row inside the long-press action sheets. */
+    private fun sheetAction(paths: List<String>, text: String, danger: Boolean = false, onClick: () -> Unit): View =
+        row().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(14), dp(8), dp(14))
+            isClickable = true
+            setOnClickListener { onClick() }
+            addView(icon(paths, if (danger) 0xFFFF6B6B.toInt() else Palette.ACCENT, 20))
+            addView(label(text, 15f, if (danger) 0xFFFF6B6B.toInt() else Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
+        }
+
+    private fun showRenameSheet(current: String, onRename: (String) -> String?, onDone: () -> Unit) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Rename", 18f, Palette.TEXT, 1), matchWrap())
+            val input = EditText(this).apply {
+                setText(current)
+                setSelection(current.substringBeforeLast('.', current).length)
+                setTextColor(Palette.TEXT)
+                textSize = 15f
+                setSingleLine(true)
+                setPadding(dp(20), 0, dp(20), 0)
+                neu(this, 26, Depth.FIELD, inset = true)
+            }
+            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(16); bottomMargin = dp(18) })
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Cancel") { dialog.dismiss() })
+            actions.addView(textButton("Save", primary = true) {
+                val error = onRename(input.text.toString())
+                if (error == null) { dialog.dismiss(); onDone() }
+                else Toast.makeText(this, error, Toast.LENGTH_SHORT).show()
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
+            sheet.addView(actions, matchWrap())
+            input.post { input.requestFocus() }
+        }
+    }
+
+    /** Long-press menu for a finished download. */
+    private fun showDownloadActions(item: DownloadItem) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label(item.name, 16f, Palette.TEXT, 1).apply {
+                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, matchWrap())
+            sheet.addView(label(DownloadNaming.formatBytes(item.total), 12f, Palette.MUTED).apply { setPadding(0, dp(4), 0, dp(10)) }, matchWrap())
+            val uri = item.savedUri?.let { Uri.parse(it) }
+            val playable = DownloadNaming.isMediaMime(item.mime) || MediaDetect.kindFromExtension(item.name)
+                .let { it == DetectedMedia.Kind.VIDEO || it == DetectedMedia.Kind.AUDIO }
+            if (uri != null && playable) sheet.addView(sheetAction(Icons.PLAY, "Play in Veyra") {
+                dialog.dismiss(); playMedia(uri, item.name)
+            }, matchWrap())
+            if (uri != null) sheet.addView(sheetAction(Icons.SHARE, "Share") { dialog.dismiss(); shareUri(uri, item.mime) }, matchWrap())
+            sheet.addView(sheetAction(Icons.EDIT, "Rename") {
+                dialog.dismiss()
+                showRenameSheet(item.name, { downloads.rename(item, it) }) { }
+            }, matchWrap())
+            if (!item.inPrivateFolder) sheet.addView(sheetAction(Icons.LOCK, "Move to private folder") {
+                dialog.dismiss()
+                Thread {
+                    val ok = downloads.moveToPrivate(item)
+                    runOnUiThread {
+                        Toast.makeText(this, if (ok) "Moved to private folder" else "Could not move this file", Toast.LENGTH_SHORT).show()
+                    }
+                }.start()
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.TRASH, "Delete", danger = true) {
+                dialog.dismiss()
+                showConfirmSheet("Delete this file?", item.name, "Delete") { downloads.delete(item, deleteFile = true) }
+            }, matchWrap())
+        }
+    }
+
+    /** Long-press menu for a file inside the private folder. */
+    private fun showPrivateFileActions(file: java.io.File) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label(file.name, 16f, Palette.TEXT, 1).apply {
+                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, matchWrap())
+            sheet.addView(label(DownloadNaming.formatBytes(file.length()), 12f, Palette.MUTED).apply { setPadding(0, dp(4), 0, dp(10)) }, matchWrap())
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+            sheet.addView(sheetAction(Icons.SHARE, "Share") {
+                dialog.dismiss()
+                shareUri(uri, android.webkit.MimeTypeMap.getSingleton()
+                    .getMimeTypeFromExtension(file.extension.lowercase()))
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.EDIT, "Rename") {
+                dialog.dismiss()
+                showRenameSheet(file.name, { downloads.renamePrivateFile(file, it) }) { showPrivateFolder() }
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.DOWNLOAD, "Move out of private folder") {
+                dialog.dismiss()
+                Thread {
+                    val ok = downloads.moveOutOfPrivate(file)
+                    runOnUiThread {
+                        Toast.makeText(this, if (ok) "Moved to Downloads/Veyra" else "Could not move this file", Toast.LENGTH_SHORT).show()
+                        if (currentPage == "pfolder") showPrivateFolder()
+                    }
+                }.start()
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.TRASH, "Delete", danger = true) {
+                dialog.dismiss()
+                showConfirmSheet("Delete this file?", file.name, "Delete") {
+                    file.delete()
+                    downloads.items.toList().filter { it.inPrivateFolder && it.name == file.name }
+                        .forEach { downloads.delete(it, false) }
+                    showPrivateFolder()
+                }
+            }, matchWrap())
+        }
     }
 
     private val streamingHosts = listOf(
@@ -2232,6 +2408,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     tab.media = result.items
                     tab.unsupportedMedia = result.unsupported
+                    if (tab === cur) updateMediaBanner()
                 }
                 return null
             }
@@ -2247,6 +2424,20 @@ class MainActivity : AppCompatActivity() {
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
             val list = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
+            if (tab.media.isEmpty()) {
+                val host = hostOf(tab.url)
+                val protectedSite = streamingHosts.any { host == it || host.endsWith(".$it") }
+                list.addView(label(
+                    if (protectedSite)
+                        "$host plays protected streams that Veyra cannot play or save outside the site. " +
+                            "Downloading from it is also against its terms. Use the site's own offline feature " +
+                            "(for example YouTube Premium) for saved videos."
+                    else
+                        "No directly playable video was found yet. Start playing the video on the page, " +
+                            "then open this again. Videos delivered as blob/DASH/DRM streams cannot be saved.",
+                    13f, Palette.MUTED
+                ).apply { setLineSpacing(0f, 1.25f); setPadding(dp(4), dp(8), dp(4), dp(8)) })
+            }
             tab.media.forEach { media ->
                 val card = column().apply {
                     setPadding(dp(16), dp(14), dp(16), dp(14))
@@ -2370,7 +2561,7 @@ class MainActivity : AppCompatActivity() {
                 item(Icons.PLAY, "Play in Veyra") { playMedia(Uri.parse(currentUrl), null) }
             }
             cur?.let { tab ->
-                if (tab.media.isNotEmpty() || tab.unsupportedMedia > 0) {
+                if (tab.media.isNotEmpty() || tab.unsupportedMedia > 0 || hostOf(tab.url).let { h -> streamingHosts.any { h == it || h.endsWith(".$it") } }) {
                     val count = tab.media.size
                     item(Icons.PLAY, if (count > 0) "Media on this page ($count)" else "Media on this page") { showMediaSheet() }
                 }
@@ -2504,7 +2695,7 @@ class MainActivity : AppCompatActivity() {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         val sheet = column().apply {
-            setPadding(dp(12), dp(18), dp(12), dp(18))
+            setPadding(dp(14), dp(18), dp(14), dp(18))
             neu(this, 24, Depth.CARD)
             isClickable = true
         }
@@ -2512,19 +2703,28 @@ class MainActivity : AppCompatActivity() {
         val scroller = ScrollView(this).apply {
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
-            setPadding(0, dp(8), 0, dp(8))
+            isVerticalScrollBarEnabled = false
             addView(sheet)
         }
-        dialog.setContentView(scroller)
+        val outer = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            setOnClickListener { dialog.dismiss() }
+        }
+        outer.addView(scroller, FrameLayout.LayoutParams(dp(292), ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            marginEnd = dp(12); topMargin = dp(32); bottomMargin = dp(32)
+        })
+        dialog.setContentView(outer)
         dialog.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.argb(170, 4, 9, 16)))
-            setLayout(dp(292), ViewGroup.LayoutParams.MATCH_PARENT)
-            setGravity(Gravity.END)
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.55f)
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         }
         dialog.setCanceledOnTouchOutside(true)
         dialog.show()
-        dialog.window?.setLayout(dp(292), ViewGroup.LayoutParams.MATCH_PARENT)
     }
 
     private fun showSheet(build: (LinearLayout) -> Unit) = showSheet { sheet, _ -> build(sheet) }

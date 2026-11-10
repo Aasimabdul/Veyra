@@ -20,6 +20,9 @@ internal object DownloadNaming {
         return cleaned.ifBlank { "download" }
     }
 
+    /** Makes a user-typed file name safe: no path separators or control characters. */
+    fun sanitize(name: String): String = name.replace(unsafe, "_").trim().trim('.').take(120)
+
     /** "file.txt" -> "file (1).txt" when the name is already taken. */
     fun uniqueName(name: String, taken: Set<String>): String {
         if (name !in taken) return name

@@ -18,7 +18,11 @@ import java.util.TimeZone
  * change or block a network without notice. The private key is generated on the device.
  */
 object WarpProvisioner {
-    private const val REGISTER_URL = "https://api.cloudflareclient.com/v0a2158/reg"
+    private val REGISTER_URLS = listOf(
+        "https://api.cloudflareclient.com/v0a2158/reg",
+        "https://api.cloudflareclient.com/v0a1922/reg",
+        "https://api.cloudflareclient.com/v0i1909051800/reg"
+    )
     private const val DEFAULT_PORT = 2408
 
     /** Pure conversion of Cloudflare's registration response into a WireGuard .conf (unit-tested). */
@@ -70,26 +74,32 @@ object WarpProvisioner {
             .put("model", "PC")
             .put("locale", "en_US")
             .toString()
-        val connection = URL(REGISTER_URL).openConnection() as HttpURLConnection
-        try {
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 20_000
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-            connection.setRequestProperty("User-Agent", "okhttp/3.12.1")
-            connection.setRequestProperty("CF-Client-Version", "a-6.3-4500")
-            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val code = connection.responseCode
-            if (code !in 200..299) throw IOException("Cloudflare refused the setup (HTTP $code). Try another network or import a config.")
-            val reply = connection.inputStream.bufferedReader().use { it.readText() }
-            return buildConfig(pair.privateKey.toBase64(), reply)
-        } catch (e: IOException) {
-            throw e
-        } catch (e: Exception) {
-            throw IOException("Could not reach Cloudflare: ${e.message ?: e.javaClass.simpleName}")
-        } finally {
-            connection.disconnect()
+        var lastFailure = "no reply"
+        for (url in REGISTER_URLS) {
+            val connection = URL(url).openConnection() as HttpURLConnection
+            try {
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 20_000
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                connection.setRequestProperty("User-Agent", "okhttp/3.12.1")
+                connection.setRequestProperty("CF-Client-Version", "a-6.3-4500")
+                connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                if (code in 200..299) {
+                    val reply = connection.inputStream.bufferedReader().use { it.readText() }
+                    return buildConfig(pair.privateKey.toBase64(), reply)
+                }
+                lastFailure = "HTTP $code"
+            } catch (e: IOException) {
+                lastFailure = e.message ?: e.javaClass.simpleName
+            } catch (e: Exception) {
+                lastFailure = e.message ?: e.javaClass.simpleName
+            } finally {
+                connection.disconnect()
+            }
         }
+        throw IOException("Cloudflare setup failed ($lastFailure). Check your internet or try another network, or import a WireGuard config.")
     }
 }

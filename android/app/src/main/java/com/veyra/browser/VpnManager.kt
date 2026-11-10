@@ -163,8 +163,12 @@ class VpnManager private constructor(context: Context) {
         try {
             val engine = backend
             val running = engine != null && engine.runningTunnelNames.contains(TUNNEL_NAME)
-            status = if (running) Status.ON else Status.OFF
-            if (running) lastError = null
+            if (running) {
+                status = Status.ON
+                lastError = null
+            } else if (status != Status.ERROR) {
+                status = Status.OFF
+            } // an ERROR stays visible until the user acts, instead of being reset to OFF
         } catch (e: Throwable) {
             status = Status.ERROR
             lastError = "Could not read VPN status: " + (e.message ?: e.javaClass.simpleName)

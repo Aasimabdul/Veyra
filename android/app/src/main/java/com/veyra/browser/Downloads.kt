@@ -144,6 +144,109 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         }
     }
 
+    // ---- file actions (long-press menu) -------------------------------------------------
+
+    private fun publicDir() = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra")
+
+    private fun mimeFor(name: String): String =
+        android.webkit.MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
+
+    /** Copies a finished public download into the lock-protected private folder, then removes the public copy. */
+    fun moveToPrivate(item: DownloadItem): Boolean {
+        if (item.state != DlState.DONE || item.inPrivateFolder) return false
+        val uri = item.savedUri?.let { Uri.parse(it) } ?: return false
+        return try {
+            val dir = privateDir(context).apply { mkdirs() }
+            val target = File(dir, DownloadNaming.uniqueName(item.name, dir.list()?.toSet() ?: emptySet()))
+            val input = context.contentResolver.openInputStream(uri) ?: return false
+            input.use { i -> target.outputStream().use { o -> i.copyTo(o) } }
+            if (uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY) {
+                context.contentResolver.delete(uri, null, null)
+            } else {
+                File(publicDir(), item.name).delete()
+            }
+            item.savedUri = FileProvider.getUriForFile(context, "${context.packageName}.files", target).toString()
+            item.name = target.name
+            item.privateFolder = true
+            persist()
+            changedNow()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Renames a finished download. Returns an error message, or null on success. */
+    fun rename(item: DownloadItem, requested: String): String? {
+        val newName = DownloadNaming.sanitize(requested)
+        if (newName.isBlank()) return "Enter a file name"
+        if (newName == item.name) return null
+        if (item.state != DlState.DONE) return "Wait for the download to finish"
+        return try {
+            val uri = item.savedUri?.let { Uri.parse(it) } ?: return "File not found"
+            if (uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY) {
+                val values = ContentValues().apply { put(MediaStore.Downloads.DISPLAY_NAME, newName) }
+                if (context.contentResolver.update(uri, values, null, null) < 1) return "Could not rename this file"
+            } else {
+                val dir = if (item.inPrivateFolder) privateDir(context) else publicDir()
+                val target = File(dir, newName)
+                if (target.exists()) return "A file with that name already exists"
+                if (!File(dir, item.name).renameTo(target)) return "Could not rename this file"
+                item.savedUri = FileProvider.getUriForFile(context, "${context.packageName}.files", target).toString()
+            }
+            item.name = newName
+            persist()
+            changedNow()
+            null
+        } catch (e: Exception) {
+            "Could not rename: ${e.message ?: "unknown error"}"
+        }
+    }
+
+    /** Renames a file inside the private folder (and the matching list entry). */
+    fun renamePrivateFile(file: File, requested: String): String? {
+        val newName = DownloadNaming.sanitize(requested)
+        if (newName.isBlank()) return "Enter a file name"
+        if (newName == file.name) return null
+        val target = File(file.parentFile, newName)
+        if (target.exists()) return "A file with that name already exists"
+        if (!file.renameTo(target)) return "Could not rename this file"
+        items.filter { it.inPrivateFolder && it.name == file.name }.forEach { it.name = newName }
+        persist()
+        changedNow()
+        return null
+    }
+
+    /** Moves a private-folder file to the public Downloads/Veyra folder. */
+    fun moveOutOfPrivate(file: File): Boolean = try {
+        val mime = mimeFor(file.name)
+        if (Build.VERSION.SDK_INT >= 29) {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, file.name)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/Veyra")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("Downloads unavailable")
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: throw java.io.IOException("Cannot write")
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        } else {
+            val dir = publicDir().apply { mkdirs() }
+            file.copyTo(File(dir, DownloadNaming.uniqueName(file.name, dir.list()?.toSet() ?: emptySet())), overwrite = false)
+        }
+        file.delete()
+        items.filter { it.inPrivateFolder && it.name == file.name }.toList().forEach { items.remove(it) }
+        persist()
+        changedNow()
+        true
+    } catch (_: Exception) {
+        false
+    }
+
     // ---- transfer ----------------------------------------------------------------------
 
     private fun partFile(item: DownloadItem) = File(partDir, "${item.id}.part")
