@@ -2385,17 +2385,13 @@ class MainActivity : AppCompatActivity() {
             sheet.addView(statusLabel, matchWrap().apply { bottomMargin = dp(12) })
 
             var checking = false
-            lateinit var playButton: TextView
-            lateinit var downloadButton: TextView
-            lateinit var privateButton: TextView
+            val actionButtons = ArrayList<TextView>(3)
             fun setChecking(value: Boolean) {
                 checking = value
-                playButton.isEnabled = !value
-                downloadButton.isEnabled = !value
-                privateButton.isEnabled = !value
-                playButton.alpha = if (value) 0.55f else 1f
-                downloadButton.alpha = if (value) 0.55f else 1f
-                privateButton.alpha = if (value) 0.55f else 1f
+                actionButtons.forEach { button ->
+                    button.isEnabled = !value
+                    button.alpha = if (value) 0.55f else 1f
+                }
                 statusLabel.text = if (value) "Checking redirects and media type…" else statusLabel.text
                 statusLabel.visibility = if (value || statusLabel.text.isNotBlank()) View.VISIBLE else View.GONE
             }
@@ -2502,14 +2498,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             val mainActions = row().apply { gravity = Gravity.CENTER }
-            playButton = textButton("Play / Stream", primary = true) { runAction(playOnly = true, toPrivateFolder = false) }
-            downloadButton = textButton("Download") { runAction(playOnly = false, toPrivateFolder = false) }
+            val playButton = textButton("Play / Stream", primary = true) { runAction(playOnly = true, toPrivateFolder = false) }
+            val downloadButton = textButton("Download") { runAction(playOnly = false, toPrivateFolder = false) }
+            actionButtons.add(playButton)
+            actionButtons.add(downloadButton)
             mainActions.addView(playButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             mainActions.addView(downloadButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
             sheet.addView(mainActions, matchWrap())
             val secondaryActions = row().apply { gravity = Gravity.END }
             secondaryActions.addView(textButton("Cancel") { dialog.dismiss() }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            privateButton = textButton("Private") { runAction(playOnly = false, toPrivateFolder = true) }
+            val privateButton = textButton("Private") { runAction(playOnly = false, toPrivateFolder = true) }
+            actionButtons.add(privateButton)
             secondaryActions.addView(privateButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
             sheet.addView(secondaryActions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
         }
