@@ -2402,10 +2402,11 @@ class MainActivity : AppCompatActivity() {
         showSheet { sheet, dialog ->
             sheet.addView(label("Download from a link", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Paste a direct video, audio or file link. Veyra checks the response before choosing an action. " +
+                "Paste a direct video, audio or file link. Veyra checks redirects and media metadata first. " +
                     "Ordinary webpages open in the browser; protected streaming services must use their own player.",
                 13f, Palette.MUTED
             ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(12)) }, matchWrap())
+
             val input = EditText(this).apply {
                 hint = "https://"
                 setHintTextColor(Palette.MUTED)
@@ -2417,6 +2418,7 @@ class MainActivity : AppCompatActivity() {
                 neu(this, 26, Depth.FIELD, inset = true)
             }
             sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(10) })
+
             val statusLabel = label("", 12f, Palette.MUTED).apply {
                 visibility = View.GONE
                 setLineSpacing(0f, 1.15f)
@@ -2424,16 +2426,17 @@ class MainActivity : AppCompatActivity() {
             sheet.addView(statusLabel, matchWrap().apply { bottomMargin = dp(12) })
 
             var checking = false
-            val actionButtons = ArrayList<TextView>(3)
+            val actionButtons = ArrayList<TextView>(2)
             fun setChecking(value: Boolean) {
                 checking = value
                 actionButtons.forEach { button ->
                     button.isEnabled = !value
                     button.alpha = if (value) 0.55f else 1f
                 }
-                statusLabel.text = if (value) "Checking redirects and media type…" else statusLabel.text
+                if (value) statusLabel.text = "Checking redirects and media type…"
                 statusLabel.visibility = if (value || statusLabel.text.isNotBlank()) View.VISIBLE else View.GONE
             }
+
             fun resolveUrl(): String? {
                 val raw = input.text.toString().trim()
                 return when {
@@ -2442,6 +2445,7 @@ class MainActivity : AppCompatActivity() {
                     else -> null
                 }
             }
+
             fun runAction(playOnly: Boolean) {
                 if (checking) return
                 val url = resolveUrl()
@@ -2456,6 +2460,7 @@ class MainActivity : AppCompatActivity() {
                     statusLabel.visibility = View.VISIBLE
                     return
                 }
+
                 setChecking(true)
                 Thread {
                     val result = inspectLink(url)
@@ -2467,6 +2472,7 @@ class MainActivity : AppCompatActivity() {
                             statusLabel.visibility = View.VISIBLE
                             return@runOnUiThread
                         }
+
                         val finalHost = hostOf(result.finalUrl).lowercase()
                         if (streamingHosts.any { finalHost == it || finalHost.endsWith(".$it") }) {
                             statusLabel.text = "The link redirects to a protected streaming service. Use its website or official app."
@@ -2481,16 +2487,16 @@ class MainActivity : AppCompatActivity() {
                             mime.equals("application/xhtml+xml", ignoreCase = true)
                         val uri = Uri.parse(finalUrl)
                         val playbackMime = mime ?: when (MediaDetect.kindFromExtension(finalUrl)) {
-                            DetectedMedia.Kind.STREAM -> if (MediaDetect.extensionOf(finalUrl) == "mpd") "application/dash+xml" else "application/vnd.apple.mpegurl"
+                            DetectedMedia.Kind.STREAM ->
+                                if (MediaDetect.extensionOf(finalUrl) == "mpd") "application/dash+xml"
+                                else "application/vnd.apple.mpegurl"
                             else -> null
                         }
 
                         when {
                             htmlPage -> {
                                 if (playOnly) {
-                                    statusLabel.text = if (playOnly) {
-                                        "This link is a webpage, not a direct media file. Open it in Veyra and use Media on this page."
-                                    }
+                                    statusLabel.text = "This link is a webpage, not a direct media file. Open it in Veyra and use Media on this page."
                                     statusLabel.visibility = View.VISIBLE
                                 } else {
                                     dialog.dismiss()
@@ -2502,26 +2508,38 @@ class MainActivity : AppCompatActivity() {
                                     dialog.dismiss()
                                     playMedia(uri, null, playbackMime)
                                 } else {
-                                    statusLabel.text = "This is a segmented stream. Use Play / Stream when the source allows it; Veyra cannot save it as one file."
+                                    statusLabel.text = "This is a segmented stream, not a single downloadable file. Use Play / Stream when the source permits it."
                                     statusLabel.visibility = View.VISIBLE
                                 }
                             }
                             kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO -> {
                                 dialog.dismiss()
                                 if (playOnly) playMedia(uri, null, playbackMime)
-                                else startUrlDownload(finalUrl, cur?.isPrivate == true, suggestedFileName = result.suggestedFileName)
+                                else startUrlDownload(
+                                    finalUrl,
+                                    cur?.isPrivate == true,
+                                    suggestedFileName = result.suggestedFileName
+                                )
                             }
-                            !playOnly && !mime.isNullOrBlank() && mime != "text/html" -> {
-                                // A known non-HTML MIME type is a direct resource even without a filename extension.
+                            !playOnly && !mime.isNullOrBlank() && !htmlPage -> {
+                                // A known non-HTML MIME type is a direct resource even without an extension.
                                 dialog.dismiss()
-                                startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder, result.suggestedFileName)
+                                startUrlDownload(
+                                    finalUrl,
+                                    cur?.isPrivate == true,
+                                    suggestedFileName = result.suggestedFileName
+                                )
                             }
                             !playOnly && DownloadNaming.looksLikeDirectFile(finalUrl) -> {
                                 dialog.dismiss()
-                                startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder, result.suggestedFileName)
+                                startUrlDownload(
+                                    finalUrl,
+                                    cur?.isPrivate == true,
+                                    suggestedFileName = result.suggestedFileName
+                                )
                             }
                             else -> {
-                                if (playOnly || toPrivateFolder) {
+                                if (playOnly) {
                                     statusLabel.text = "Veyra couldn't confirm a direct media file at this URL. Open the page first, then use Media on this page."
                                     statusLabel.visibility = View.VISIBLE
                                 } else {
@@ -2542,12 +2560,15 @@ class MainActivity : AppCompatActivity() {
             mainActions.addView(playButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             mainActions.addView(downloadButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
             sheet.addView(mainActions, matchWrap())
+
             val secondaryActions = row().apply { gravity = Gravity.END }
-            secondaryActions.addView(textButton("Cancel") { dialog.dismiss() }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            sheet.addView(secondaryActions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+            secondaryActions.addView(textButton("Cancel") { dialog.dismiss() },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            sheet.addView(secondaryActions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(10)
+            })
         }
     }
-
 
     // ---- VPN ---------------------------------------------------------------------------
 
