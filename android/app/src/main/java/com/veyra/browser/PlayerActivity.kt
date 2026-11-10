@@ -170,8 +170,13 @@ class PlayerActivity : AppCompatActivity() {
             background = pill(Color.argb(235, 16, 22, 32), 22, 0x5539D8FF)
             visibility = View.GONE
             addView(errorText, LinearLayout.LayoutParams(-1, -2))
+            addView(pillButton("Retry playback", "Retry playback") {
+                val resumeAt = player?.currentPosition ?: 0L
+                errorCard.visibility = View.GONE
+                startPlayback(resumeAt)
+            }, LinearLayout.LayoutParams(-2, dp(42)).apply { topMargin = dp(16) })
             addView(pillButton("Open with another app", "Open with another app") { openElsewhere() },
-                LinearLayout.LayoutParams(-2, dp(42)).apply { topMargin = dp(16) })
+                LinearLayout.LayoutParams(-2, dp(42)).apply { topMargin = dp(10) })
         }
         root.addView(errorCard, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply {
             leftMargin = dp(24); rightMargin = dp(24)
@@ -527,11 +532,7 @@ class PlayerActivity : AppCompatActivity() {
                     startPlayback(player?.currentPosition ?: startAt)
                     return
                 }
-                showError(
-                    if (decoderProblem) "This phone cannot decode this video (${error.errorCodeName}). " +
-                        "It probably uses a codec or profile (for example 10-bit HEVC or AV1) that this device does not support."
-                    else "Can't play this video (${error.errorCodeName}). The file may be damaged, or the source may block direct playback."
-                )
+                showError(playbackErrorMessage(error, decoderProblem))
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -561,6 +562,31 @@ class PlayerActivity : AppCompatActivity() {
         handler.removeCallbacks(ticker)
         handler.post(ticker)
         setControlsVisible(true)
+    }
+
+    private fun playbackErrorMessage(error: PlaybackException, decoderProblem: Boolean): String {
+        if (decoderProblem) {
+            return "This phone cannot decode this video (${error.errorCodeName}). It may use an unsupported codec/profile, or the media may be damaged."
+        }
+        val code = error.errorCodeName.uppercase(java.util.Locale.ROOT)
+        return when {
+            "IO_BAD_HTTP_STATUS" in code ->
+                "The server rejected the media request. The link may have expired, require sign-in, or block direct playback."
+            "IO_NETWORK_CONNECTION_TIMEOUT" in code || "IO_NETWORK_CONNECTION_FAILED" in code ->
+                "The media source could not be reached. Check your connection, then retry."
+            "IO_FILE_NOT_FOUND" in code ->
+                "The source file was not found. The link may have expired or the file may have been removed."
+            "IO_INVALID_HTTP_CONTENT_TYPE" in code ->
+                "The server returned content that is not recognized as media. Open the link in the browser to check it."
+            "PARSING_CONTAINER_UNSUPPORTED" in code || "PARSING_MANIFEST_UNSUPPORTED" in code ->
+                "This container or streaming manifest is not supported by the native player. Try the source's original webpage player."
+            "PARSING_CONTAINER_MALFORMED" in code || "PARSING_MANIFEST_MALFORMED" in code ->
+                "The media container or playlist is malformed or incomplete."
+            "DECODER_INIT_FAILED" in code ->
+                "The device could not initialize a decoder for this media."
+            else ->
+                "Veyra could not play this source (${error.errorCodeName}). It may require the original website player or a compatible external app."
+        }
     }
 
     private fun showError(message: String) {
