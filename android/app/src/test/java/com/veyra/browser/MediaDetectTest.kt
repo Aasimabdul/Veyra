@@ -23,6 +23,15 @@ class MediaDetectTest {
         assertFalse(r.items.single().downloadable)
     }
 
+    @Test fun returnsDetectedQualityForVideoCandidates() {
+        val r = MediaDetect.parse("""{"items":[
+            {"url":"https://cdn.example/clip.mp4","tag":"video","height":720,"width":1280},
+            {"url":"https://cdn.example/clip_1080p.mp4","tag":"video"}
+        ]}""")
+        assertEquals("720p", r.items[0].qualityLabel)
+        assertEquals("1080p", r.items[1].qualityLabel)
+    }
+
     @Test fun mimeMetadataClassifiesExtensionlessHlsAndDirectAudio() {
         val r = MediaDetect.parse("""{"items":[
             {"url":"https://cdn.example/live/playlist?token=abc","tag":"video","mime":"application/vnd.apple.mpegurl"},
