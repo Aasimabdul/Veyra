@@ -1657,9 +1657,14 @@ class MainActivity : AppCompatActivity() {
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    private fun startUrlDownload(url: String, isPrivate: Boolean, privateFolder: Boolean = false) {
+    private fun startUrlDownload(
+        url: String,
+        isPrivate: Boolean,
+        privateFolder: Boolean = false,
+        suggestedFileName: String? = null
+    ) {
         requestDownloadNotifications()
-        downloads.enqueueUrl(url, isPrivate, privateFolder)
+        downloads.enqueueUrl(url, isPrivate, privateFolder, suggestedFileName)
         Toast.makeText(this, if (privateFolder || isPrivate) "Saving to the private folder" else "Download started", Toast.LENGTH_SHORT).show()
     }
 
@@ -2175,7 +2180,8 @@ class MainActivity : AppCompatActivity() {
         val mimeType: String?,
         val contentLength: Long,
         val finalUrl: String,
-        val error: String? = null
+        val error: String? = null,
+        val suggestedFileName: String? = null
     )
 
     /** Inspect metadata in the background without reading the full media body into memory. */
@@ -2195,6 +2201,7 @@ class MainActivity : AppCompatActivity() {
             var mime = head.contentType?.substringBefore(';')?.trim()
             var length = head.contentLengthLong
             var finalUrl = head.url.toString()
+            var disposition = head.getHeaderField("Content-Disposition")
             val unsupportedRedirect = !DownloadNaming.isHttpUrl(finalUrl)
             if (unsupportedRedirect) {
                 return LinkInspection(status, mime, length, finalUrl, "This link redirects to an unsupported URL type.")
@@ -2221,6 +2228,7 @@ class MainActivity : AppCompatActivity() {
                 connection = probe
                 status = probe.responseCode
                 mime = probe.contentType?.substringBefore(';')?.trim()
+                disposition = probe.getHeaderField("Content-Disposition") ?: disposition
                 val rangeTotal = probe.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
                 length = rangeTotal ?: probe.contentLengthLong
                 finalUrl = probe.url.toString()
@@ -2235,7 +2243,8 @@ class MainActivity : AppCompatActivity() {
             if (status !in 200..299) {
                 return LinkInspection(status, mime, length, finalUrl, "The server replied with HTTP $status. The link may have expired or require sign-in.")
             }
-            return LinkInspection(status, mime, length, finalUrl)
+            val suggestedName = disposition?.takeIf { it.isNotBlank() }?.let { DownloadNaming.fileName(it, finalUrl) }
+            return LinkInspection(status, mime, length, finalUrl, suggestedFileName = suggestedName)
         } catch (_: Exception) {
             return LinkInspection(-1, null, -1, url, "Could not inspect this link. Check the connection and the URL.")
         } finally {
@@ -2361,16 +2370,16 @@ class MainActivity : AppCompatActivity() {
                             kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO -> {
                                 dialog.dismiss()
                                 if (playOnly) playMedia(uri, null, playbackMime)
-                                else startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder)
+                                else startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder, result.suggestedFileName)
                             }
                             !playOnly && !mime.isNullOrBlank() && mime != "text/html" -> {
                                 // A known non-HTML MIME type is a direct resource even without a filename extension.
                                 dialog.dismiss()
-                                startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder)
+                                startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder, result.suggestedFileName)
                             }
                             !playOnly && DownloadNaming.looksLikeDirectFile(finalUrl) -> {
                                 dialog.dismiss()
-                                startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder)
+                                startUrlDownload(finalUrl, cur?.isPrivate == true, toPrivateFolder, result.suggestedFileName)
                             }
                             else -> {
                                 if (playOnly || toPrivateFolder) {
