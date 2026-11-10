@@ -19,7 +19,7 @@
     var blobs = 0;
     adMediaSkipped = 0;
     function qualityFromUrl(u) {
-      var match = String(u || "").match(/(?:^|[^0-9])(2160|1440|1080|720|540|480|360|240)p?(?:[^0-9]|$)|\\b4k\\b/i);
+      var match = String(u || "").match(/(?:^|[^0-9])(2160|1440|1080|720|540|480|360|240)p?(?:[^0-9]|$)|\b4k\b/i);
       return match ? (match[1] ? match[1] + "p" : "4K") : "";
     }
     function add(u, tag, title, mime, width, height, quality) {
