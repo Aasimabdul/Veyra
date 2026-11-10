@@ -18,15 +18,28 @@
     var items = [];
     var blobs = 0;
     adMediaSkipped = 0;
-    function add(u, tag, title) {
+    function qualityFromUrl(u) {
+      var match = String(u || "").match(/(?:^|[^0-9])(2160|1440|1080|720|540|480|360|240)p?(?:[^0-9]|$)|\b4k\b/i);
+      return match ? (match[1] ? match[1] + "p" : "4K") : "";
+    }
+    function add(u, tag, title, mime, width, height, quality) {
       if (!u) return;
       if (u.indexOf("blob:") === 0 || u.indexOf("mediastream:") === 0) {
         if (!seenBlobs[u]) { seenBlobs[u] = true; blobs++; }
         return;
       }
       var a = abs(u);
-      if (a && !known[a]) known[a] = { url: a, tag: tag, title: title || "" };
-      else if (a && known[a] && !known[a].title && title) known[a].title = title;
+      if (a && !known[a]) known[a] = {
+        url: a, tag: tag, title: title || "", mime: mime || "",
+        width: width || 0, height: height || 0, quality: quality || qualityFromUrl(a)
+      };
+      else if (a && known[a]) {
+        if (!known[a].title && title) known[a].title = title;
+        if (!known[a].mime && mime) known[a].mime = mime;
+        if (!known[a].width && width) known[a].width = width;
+        if (!known[a].height && height) known[a].height = height;
+        if (!known[a].quality && quality) known[a].quality = quality;
+      }
     }
     function isYoutubeAdShowing() {
       if (!/youtube\.com$|youtube-nocookie\.com$/.test(location.hostname)) return false;
@@ -41,9 +54,19 @@
       var el = els[i];
       if (isAdVideo(el)) { adMediaSkipped++; continue; }
       var tag = el.tagName.toLowerCase();
-      add(el.currentSrc || el.getAttribute("src"), tag, title);
+      var width = tag === "video" ? (el.videoWidth || parseInt(el.getAttribute("width") || "0", 10) || 0) : 0;
+      var height = tag === "video" ? (el.videoHeight || parseInt(el.getAttribute("height") || "0", 10) || 0) : 0;
+      var quality = el.getAttribute("data-quality") || el.getAttribute("data-resolution") || (height ? height + "p" : "");
+      add(el.currentSrc || el.getAttribute("src"), tag, title, el.getAttribute("type") || "", width, height, quality);
       var sources = el.querySelectorAll("source[src]");
-      for (var j = 0; j < sources.length; j++) add(sources[j].getAttribute("src"), tag, title);
+      for (var j = 0; j < sources.length; j++) {
+        var source = sources[j];
+        var sourceHeight = parseInt(source.getAttribute("data-height") || source.getAttribute("height") || "0", 10) || 0;
+        var sourceWidth = parseInt(source.getAttribute("data-width") || source.getAttribute("width") || "0", 10) || 0;
+        var sourceQuality = source.getAttribute("data-quality") || source.getAttribute("data-resolution") ||
+          source.getAttribute("label") || (sourceHeight ? sourceHeight + "p" : qualityFromUrl(source.getAttribute("src")));
+        add(source.getAttribute("src"), tag, title, source.getAttribute("type") || "", sourceWidth, sourceHeight, sourceQuality);
+      }
       ["data-src", "data-video-src", "data-url"].forEach(function (attr) {
         add(el.getAttribute(attr), tag, title);
       });
@@ -54,7 +77,7 @@
         for (var ri = Math.max(0, resources.length - 250); ri < resources.length; ri++) {
           var ru = resources[ri].name || "";
           if (/\.(mp4|m4v|webm|mkv|mov|3gp|ogv|mp3|m4a|aac|ogg|oga|opus|wav|flac|m3u8|mpd)(\?|#|$)/i.test(ru)) {
-            add(ru, /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac)(\?|#|$)/i.test(ru) ? "audio" : "video", title);
+            add(ru, /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac)(\?|#|$)/i.test(ru) ? "audio" : "video", title, "", 0, 0, qualityFromUrl(ru));
           }
         }
       }
@@ -71,19 +94,8 @@
     return { page: location.href, items: all.slice(-60), blobs: Object.keys(seenBlobs).length, adMediaSkipped: adMediaSkipped };
   }
 
-  function handleSkippableYouTubeAd() {
-    if (!/youtube\.com$|youtube-nocookie\.com$/.test(location.hostname)) return;
-    try {
-      var skip = document.querySelector(".ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern");
-      if (skip && !skip.disabled && skip.getClientRects().length) skip.click();
-      var overlays = document.querySelectorAll(".ytp-ad-overlay-container, .ytp-ad-text-overlay, .ytp-ad-player-overlay");
-      for (var i = 0; i < overlays.length; i++) overlays[i].style.setProperty("display", "none", "important");
-    } catch (e) { /* site UI changes are expected */ }
-  }
-
   function report() {
     timer = null;
-    handleSkippableYouTubeAd();
     var payload = collect();
     var key = JSON.stringify(payload);
     if (key === lastSent) return;

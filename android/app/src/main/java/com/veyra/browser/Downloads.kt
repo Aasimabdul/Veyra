@@ -75,7 +75,10 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
 
     private fun changedNow() { main.post { onChange() } }
 
-    fun takenNames(): Set<String> = items.map { it.name }.toSet()
+    fun takenNames(): Set<String> =
+        (items.map { it.name } +
+            (privateDir(context).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()) +
+            (publicDir().listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
 
     /** Handles a response Gecko could not render (attachment, archive, binary...). */
     fun enqueue(response: WebResponse, isPrivate: Boolean) {
@@ -96,10 +99,17 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
     }
 
     /** Direct URL download (used for plain media/file links). Verifies status and content type. */
-    fun enqueueUrl(url: String, isPrivate: Boolean, privateFolder: Boolean = false) {
+    fun enqueueUrl(
+        url: String,
+        isPrivate: Boolean,
+        privateFolder: Boolean = false,
+        suggestedFileName: String? = null
+    ) {
         if (!DownloadNaming.isHttpUrl(url)) return
+        val preferredName = suggestedFileName?.let { DownloadNaming.sanitize(it) }
+            ?.takeIf { it.isNotBlank() } ?: DownloadNaming.fileName(null, url)
         val item = DownloadItem(ids.incrementAndGet(), url,
-            DownloadNaming.uniqueName(DownloadNaming.fileName(null, url), takenNames()), null, isPrivate)
+            DownloadNaming.uniqueName(preferredName, takenNames()), null, isPrivate)
         item.privateFolder = privateFolder
         items.add(0, item)
         pool.execute { runFromUrl(item, 0L) }
@@ -152,47 +162,100 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         android.webkit.MimeTypeMap.getSingleton()
             .getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
 
-    /** Copies a finished public download into the lock-protected private folder, then removes the public copy. */
+    private fun contentUriNameExists(name: String): Boolean {
+        if (Build.VERSION.SDK_INT < 29) return false
+        val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
+        return context.contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+            selection,
+            arrayOf(name, "Download/Veyra"),
+            null
+        )?.use { it.moveToFirst() } ?: false
+    }
+
+    private fun fileNameCollision(name: String, excluding: DownloadItem? = null): Boolean {
+        val itemCollision = items.any { it !== excluding && it.name.equals(name, ignoreCase = true) }
+        val privateCollision = privateDir(context).listFiles()?.any {
+            it.isFile && it.name.equals(name, ignoreCase = true) &&
+                !(excluding?.inPrivateFolder == true && it.name == excluding.name)
+        } ?: false
+        val publicCollision = publicDir().listFiles()?.any {
+            it.isFile && it.name.equals(name, ignoreCase = true) &&
+                !(excluding?.inPrivateFolder == false && it.name == excluding.name)
+        } ?: false
+        return itemCollision || privateCollision || publicCollision || contentUriNameExists(name)
+    }
+
+    private fun withPreservedExtension(requested: String, existing: String): String {
+        val clean = DownloadNaming.sanitize(requested)
+        if (clean.isBlank()) return ""
+        val dot = existing.lastIndexOf('.')
+        val extension = existing.substring(dot + 1).takeIf { dot > 0 && it.isNotBlank() }
+        return if ('.' !in clean && extension != null) "$clean.$extension" else clean
+    }
+
+    /** Copies and verifies a completed download before removing its public source. */
     fun moveToPrivate(item: DownloadItem): Boolean {
-        if (item.state != DlState.DONE || item.inPrivateFolder) return false
-        val uri = item.savedUri?.let { Uri.parse(it) } ?: return false
-        return try {
-            val dir = privateDir(context).apply { mkdirs() }
-            val target = File(dir, DownloadNaming.uniqueName(item.name, dir.list()?.toSet() ?: emptySet()))
-            val input = context.contentResolver.openInputStream(uri) ?: return false
-            input.use { i -> target.outputStream().use { o -> i.copyTo(o) } }
-            if (uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY) {
-                context.contentResolver.delete(uri, null, null)
-            } else {
-                File(publicDir(), item.name).delete()
+        if (item.state != DlState.DONE || item.isPrivate || item.inPrivateFolder) return false
+        val sourceUri = item.savedUri?.let(Uri::parse) ?: return false
+        val directory = privateDir(context).apply { mkdirs() }
+        val reserved = (items.filter { it !== item && it.inPrivateFolder }.map { it.name } +
+            (directory.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
+        val targetName = DownloadNaming.uniqueName(item.name, reserved)
+        val staging = File(directory, ".move-${item.id}.part")
+        val target = File(directory, targetName)
+        try {
+            staging.delete()
+            val bytesCopied = context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                staging.outputStream().use { output -> input.copyTo(output) }
+            } ?: return false
+            if (staging.length() != bytesCopied || (item.done >= 0 && bytesCopied != item.done) ||
+                (item.total >= 0 && bytesCopied != item.total)) return false
+            if (target.exists() || !staging.renameTo(target)) return false
+            val privateUri = try {
+                FileProvider.getUriForFile(context, "${context.packageName}.files", target)
+            } catch (e: Exception) {
+                target.delete()
+                return false
             }
-            item.savedUri = FileProvider.getUriForFile(context, "${context.packageName}.files", target).toString()
-            item.name = target.name
+            if (!deleteSavedChecked(sourceUri)) {
+                target.delete()
+                return false
+            }
+            item.name = targetName
             item.privateFolder = true
+            item.savedUri = privateUri.toString()
             persist()
             changedNow()
-            true
+            return true
         } catch (_: Exception) {
-            false
+            target.delete()
+            return false
+        } finally {
+            staging.delete()
         }
     }
 
-    /** Renames a finished download. Returns an error message, or null on success. */
+    /** Renames a completed download. Returns a user-readable error, or null on success. */
     fun rename(item: DownloadItem, requested: String): String? {
-        val newName = DownloadNaming.sanitize(requested)
+        val newName = withPreservedExtension(requested, item.name)
         if (newName.isBlank()) return "Enter a file name"
         if (newName == item.name) return null
         if (item.state != DlState.DONE) return "Wait for the download to finish"
+        if (fileNameCollision(newName, item)) return "A file with that name already exists"
         return try {
-            val uri = item.savedUri?.let { Uri.parse(it) } ?: return "File not found"
+            val uri = item.savedUri?.let(Uri::parse) ?: return "File not found"
             if (uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY) {
                 val values = ContentValues().apply { put(MediaStore.Downloads.DISPLAY_NAME, newName) }
                 if (context.contentResolver.update(uri, values, null, null) < 1) return "Could not rename this file"
             } else {
-                val dir = if (item.inPrivateFolder) privateDir(context) else publicDir()
-                val target = File(dir, newName)
+                val directory = if (item.inPrivateFolder) privateDir(context) else publicDir()
+                val source = File(directory, item.name)
+                val target = File(directory, newName)
+                if (!source.isFile) return "File not found"
                 if (target.exists()) return "A file with that name already exists"
-                if (!File(dir, item.name).renameTo(target)) return "Could not rename this file"
+                if (!source.renameTo(target)) return "Could not rename this file"
                 item.savedUri = FileProvider.getUriForFile(context, "${context.packageName}.files", target).toString()
             }
             item.name = newName
@@ -204,56 +267,144 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         }
     }
 
-    /** Renames a file inside the private folder (and the matching list entry). */
+    /** Renames a file in private storage and refreshes any persisted download URI that refers to it. */
     fun renamePrivateFile(file: File, requested: String): String? {
-        val newName = DownloadNaming.sanitize(requested)
+        val privateRoot = privateDir(context).canonicalFile
+        if (!file.isFile || file.canonicalFile.parentFile != privateRoot) return "Private file not found"
+        val newName = withPreservedExtension(requested, file.name)
         if (newName.isBlank()) return "Enter a file name"
         if (newName == file.name) return null
-        val target = File(file.parentFile, newName)
-        if (target.exists()) return "A file with that name already exists"
+        val target = File(privateRoot, newName)
+        if (target.exists() || fileNameCollision(newName)) return "A file with that name already exists"
         if (!file.renameTo(target)) return "Could not rename this file"
-        items.filter { it.inPrivateFolder && it.name == file.name }.forEach { it.name = newName }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", target).toString()
+        items.filter { it.inPrivateFolder && it.name == file.name }.forEach {
+            it.name = newName
+            it.savedUri = uri
+        }
         persist()
         changedNow()
         return null
     }
 
-    /** Moves a private-folder file to the public Downloads/Veyra folder. */
-    fun moveOutOfPrivate(file: File): Boolean = try {
-        val mime = mimeFor(file.name)
-        if (Build.VERSION.SDK_INT >= 29) {
-            val resolver = context.contentResolver
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, file.name)
-                put(MediaStore.Downloads.MIME_TYPE, mime)
-                put(MediaStore.Downloads.RELATIVE_PATH, "Download/Veyra")
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("Downloads unavailable")
-            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: throw java.io.IOException("Cannot write")
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-        } else {
-            val dir = publicDir().apply { mkdirs() }
-            file.copyTo(File(dir, DownloadNaming.uniqueName(file.name, dir.list()?.toSet() ?: emptySet())), overwrite = false)
+    /** Moves an unlocked private file to public Downloads only after its published copy is verified. */
+    fun moveOutOfPrivate(file: File): Boolean {
+        val privateRoot = runCatching { privateDir(context).canonicalFile }.getOrNull() ?: return false
+        if (!file.isFile || file.canonicalFile.parentFile != privateRoot) return false
+        val oldName = file.name
+        val matchedItems = items.filter { it.inPrivateFolder && it.name == oldName }
+        // Files saved by private browsing remain private; exporting them is not part of this action.
+        if (matchedItems.any { it.isPrivate }) return false
+        val publicNames = (items.filter { !it.inPrivateFolder }.map { it.name } +
+            (publicDir().listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
+        var targetName = DownloadNaming.uniqueName(oldName, publicNames)
+        if (contentUriNameExists(targetName)) {
+            var index = 1
+            val dot = targetName.lastIndexOf('.')
+            val stem = if (dot > 0) targetName.substring(0, dot) else targetName
+            val ext = if (dot > 0) targetName.substring(dot) else ""
+            while (contentUriNameExists("$stem ($index)$ext") || "$stem ($index)$ext" in publicNames) index++
+            targetName = "$stem ($index)$ext"
         }
-        file.delete()
-        items.filter { it.inPrivateFolder && it.name == file.name }.toList().forEach { items.remove(it) }
-        persist()
-        changedNow()
-        true
-    } catch (_: Exception) {
-        false
+        val mime = mimeFor(targetName)
+        val size = file.length()
+        var publishedUri: Uri? = null
+        var targetFile: File? = null
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val resolver = context.contentResolver
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, targetName)
+                    put(MediaStore.Downloads.MIME_TYPE, mime)
+                    put(MediaStore.Downloads.RELATIVE_PATH, "Download/Veyra")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+                publishedUri = uri
+                val copied = file.inputStream().use { input ->
+                    resolver.openOutputStream(uri)?.use { output -> input.copyTo(output) }
+                        ?: throw java.io.IOException("Cannot write to Downloads")
+                }
+                if (copied != size) throw java.io.IOException("The copied file size did not match")
+                val verifySize = resolver.openInputStream(uri)?.use { input ->
+                    var count = 0L
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        count += read
+                    }
+                    count
+                } ?: throw java.io.IOException("Cannot verify the saved file")
+                if (verifySize != size) throw java.io.IOException("The saved file size did not match")
+                val publishValues = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                if (resolver.update(uri, publishValues, null, null) < 1) throw java.io.IOException("Could not publish the file")
+            } else {
+                val directory = publicDir().apply { mkdirs() }
+                val target = File(directory, targetName)
+                if (target.exists()) return false
+                file.copyTo(target, overwrite = false)
+                targetFile = target
+                if (target.length() != size) throw java.io.IOException("The copied file size did not match")
+                publishedUri = FileProvider.getUriForFile(context, "${context.packageName}.files", target)
+            }
+            if (!file.delete()) throw java.io.IOException("Could not remove the private copy")
+            val outputUri = publishedUri ?: throw java.io.IOException("Saved URI missing")
+            if (matchedItems.isEmpty()) {
+                items.add(0, DownloadItem(ids.incrementAndGet(), "", targetName, mime, false).apply {
+                    total = size
+                    done = size
+                    state = DlState.DONE
+                    savedUri = outputUri.toString()
+                })
+            } else {
+                matchedItems.forEach {
+                    it.name = targetName
+                    it.mime = mime
+                    it.privateFolder = false
+                    it.total = size
+                    it.done = size
+                    it.state = DlState.DONE
+                    it.savedUri = outputUri.toString()
+                }
+            }
+            persist()
+            changedNow()
+            return true
+        } catch (_: Exception) {
+            // Keep the private original intact on failure; remove any incomplete public copy.
+            publishedUri?.let { uri ->
+                if (uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY) {
+                    runCatching { context.contentResolver.delete(uri, null, null) }
+                }
+            }
+            targetFile?.delete()
+            return false
+        }
     }
 
-    // ---- transfer ----------------------------------------------------------------------
+    private fun deleteSavedChecked(uri: Uri): Boolean {
+        if (uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY) {
+            return context.contentResolver.delete(uri, null, null) > 0
+        }
+        val name = uri.lastPathSegment?.substringAfterLast('/') ?: return false
+        val publicFile = File(publicDir(), name)
+        val privateFile = File(privateDir(context), name)
+        return when {
+            publicFile.isFile -> publicFile.delete()
+            privateFile.isFile -> privateFile.delete()
+            else -> false
+        }
+    }
+
+        // ---- transfer ----------------------------------------------------------------------
 
     private fun partFile(item: DownloadItem) = File(partDir, "${item.id}.part")
 
     private fun run(item: DownloadItem, body: InputStream, offset: Long) {
         try {
             body.use { copy(item, it, offset, append = offset > 0) }
+            verifyTransferLength(item)
             finish(item)
         } catch (e: Exception) {
             if (item.cancelRequested) pausedOrDeleted(item) else fail(item, e.message ?: "Download failed")
@@ -293,11 +444,20 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             val len = connection.contentLengthLong
             item.total = if (len >= 0) len + start else item.total
             connection.inputStream.use { copy(item, it, start, append = start > 0) }
+            verifyTransferLength(item)
             finish(item)
         } catch (e: Exception) {
             if (item.cancelRequested) pausedOrDeleted(item) else fail(item, e.message ?: "Download failed")
         } finally {
             connection?.disconnect()
+        }
+    }
+
+    private fun verifyTransferLength(item: DownloadItem) {
+        if (item.total >= 0 && item.done != item.total) {
+            throw java.io.IOException(
+                "The server ended the transfer early (${item.done} of ${item.total} bytes received). Retry the download."
+            )
         }
     }
 
@@ -369,13 +529,26 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         // discover them. This is app-sandbox privacy, not encrypted vault storage.
         if (item.inPrivateFolder) {
             val dir = privateDir(context).apply { mkdirs() }
+            val occupied = (items.filter { it !== item && it.inPrivateFolder }.map { it.name } +
+                (dir.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
+            item.name = DownloadNaming.uniqueName(item.name, occupied)
             val target = File(dir, item.name)
-            source.copyTo(target, overwrite = true)
+            if (target.exists()) throw java.io.IOException("A private file with that name already exists")
+            source.copyTo(target, overwrite = false)
             return FileProvider.getUriForFile(context, "${context.packageName}.files", target)
         }
 
         if (Build.VERSION.SDK_INT >= 29) {
             val resolver = context.contentResolver
+            var occupied = (items.filter { it !== item }.map { it.name } +
+                (publicDir().listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()) +
+                (privateDir(context).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
+            var candidate = DownloadNaming.uniqueName(item.name, occupied)
+            while (contentUriNameExists(candidate)) {
+                occupied = occupied + candidate
+                candidate = DownloadNaming.uniqueName(item.name, occupied)
+            }
+            item.name = candidate
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, item.name)
                 put(MediaStore.Downloads.MIME_TYPE, mime)
@@ -384,16 +557,28 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             }
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw java.io.IOException("Downloads folder is unavailable")
-            resolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } }
-                ?: throw java.io.IOException("Cannot write to Downloads")
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            return uri
+            try {
+                resolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } }
+                    ?: throw java.io.IOException("Cannot write to Downloads")
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                if (resolver.update(uri, values, null, null) <= 0) {
+                    throw java.io.IOException("Could not publish the saved download")
+                }
+                return uri
+            } catch (e: Exception) {
+                runCatching { resolver.delete(uri, null, null) }
+                throw e
+            }
         }
-        val dir = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra").apply { mkdirs() }
+        val dir = publicDir().apply { mkdirs() }
+        val occupied = (items.filter { it !== item }.map { it.name } +
+            (dir.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()) +
+            (privateDir(context).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
+        item.name = DownloadNaming.uniqueName(item.name, occupied)
         val target = File(dir, item.name)
-        source.copyTo(target, overwrite = true)
+        if (target.exists()) throw java.io.IOException("A file with that name already exists")
+        source.copyTo(target, overwrite = false)
         return FileProvider.getUriForFile(context, "${context.packageName}.files", target)
     }
 
@@ -429,7 +614,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         if (!notificationsAllowed()) return
         val totalKnown = item.total > 0
         val percent = if (totalKnown) ((item.done * 100L) / item.total).toInt().coerceIn(0, 100) else 0
-        val title = if (item.isPrivate) "Private download in progress" else item.name
+        val title = if (item.inPrivateFolder) "Private download in progress" else item.name
         val details = buildString {
             append(DownloadNaming.formatBytes(item.done))
             if (totalKnown) append(" of " + DownloadNaming.formatBytes(item.total))
@@ -444,7 +629,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setProgress(if (totalKnown) 100 else 0, percent, !totalKnown)
-            .setVisibility(if (item.isPrivate) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
+            .setVisibility(if (item.inPrivateFolder) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
             .build()
         context.getSystemService(NotificationManager::class.java).notify(item.id.toInt(), notification)
     }
@@ -463,22 +648,27 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         }
         val notification = NotificationCompat.Builder(context, "downloads")
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle(if (item.isPrivate) "Download complete" else item.name)
-            .setContentText("Saved to Downloads/Veyra")
+            .setContentTitle(if (item.inPrivateFolder) "Private download complete" else item.name)
+            .setContentText(if (item.inPrivateFolder) "Saved in Veyra’s Private folder" else "Saved to Downloads/Veyra")
             .setAutoCancel(true)
             .setOngoing(false)
             .setProgress(0, 0, false)
             .setContentIntent(pending)
-            .setVisibility(if (item.isPrivate) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
+            .setVisibility(if (item.inPrivateFolder) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE)
             .build()
         context.getSystemService(NotificationManager::class.java).notify(item.id.toInt(), notification)
     }
 
     private fun persist() {
         val array = JSONArray()
-        items.filter { (!it.isPrivate || it.privateFolder) && it.state != DlState.RUNNING }.forEach { item ->
+        items.filter { (!it.isPrivate || it.inPrivateFolder) && it.state != DlState.RUNNING }.forEach { item ->
             array.put(JSONObject().apply {
-                put("id", item.id); put("url", item.url); put("name", item.name)
+                put("id", item.id)
+                // Do not persist the origin URL for private-browsing downloads, even when the
+                // user explicitly saves the resulting file into the private folder.
+                put("url", if (item.isPrivate) "" else item.url)
+                put("private_origin", item.isPrivate)
+                put("name", item.name)
                 put("mime", item.mime ?: ""); put("total", item.total); put("done", item.done)
                 put("state", item.state.name); put("error", item.error ?: "")
                 put("uri", item.savedUri ?: ""); put("resumable", item.resumable); put("pf", item.privateFolder)
@@ -492,8 +682,16 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             val array = JSONArray(prefs.getString("items", "[]") ?: "[]")
             for (i in 0 until array.length()) {
                 val o = array.getJSONObject(i)
-                val item = DownloadItem(o.getLong("id"), o.getString("url"), o.getString("name"),
-                    o.optString("mime").ifBlank { null }, false)
+                val item = DownloadItem(
+                    o.getLong("id"),
+                    o.optString("url"), // Empty for private-browsing downloads: never restore their source URL.
+                    o.getString("name"),
+                    o.optString("mime").ifBlank { null },
+                    o.optBoolean(
+                        "private_origin",
+                        o.optString("url").isBlank() && o.optBoolean("pf", false)
+                    )
+                )
                 item.total = o.optLong("total", -1)
                 item.done = o.optLong("done", 0)
                 item.error = o.optString("error").ifBlank { null }
