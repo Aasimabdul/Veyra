@@ -40,6 +40,20 @@ class VpnConfigSummaryTest {
     @Test fun splitRoutesAreNotAllTraffic() {
         val s = VpnConfigSummary.of("[Peer]\nAllowedIPs = 10.0.0.0/8\nEndpoint = a:1")
         assertFalse(s.routesAllTraffic)
+        assertFalse(s.routesAllIpv4)
+        assertFalse(s.routesAllIpv6)
+    }
+
+    @Test fun oneIpFamilyDefaultRouteDoesNotClaimAllTraffic() {
+        val ipv4Only = VpnConfigSummary.of("[Peer]\nAllowedIPs = 0.0.0.0/0\nEndpoint = a:1")
+        assertTrue(ipv4Only.routesAllIpv4)
+        assertFalse(ipv4Only.routesAllIpv6)
+        assertFalse(ipv4Only.routesAllTraffic)
+
+        val ipv6Only = VpnConfigSummary.of("[Peer]\nAllowedIPs = ::/0\nEndpoint = a:1")
+        assertFalse(ipv6Only.routesAllIpv4)
+        assertTrue(ipv6Only.routesAllIpv6)
+        assertFalse(ipv6Only.routesAllTraffic)
     }
 
     @Test fun emptyInputIsSafe() {

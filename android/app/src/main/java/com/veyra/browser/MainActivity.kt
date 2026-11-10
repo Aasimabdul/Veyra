@@ -18,6 +18,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private var blockedTotal = 0
     private var strictProtection = false
     private var cookieMode = "trackers"
+    private var websiteColorScheme = "light"
     private var javascriptEnabled = true
     private var blockPopups = true
     private lateinit var geckoView: GeckoView
@@ -180,12 +182,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, backCallback)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         themeKey = prefs.getString("theme", Themes.SYSTEM) ?: Themes.SYSTEM
         strictProtection = prefs.getBoolean("protection_strict", false)
         cookieMode = prefs.getString("cookie_mode", "trackers") ?: "trackers"
         javascriptEnabled = prefs.getBoolean("javascript_enabled", true)
         blockPopups = prefs.getBoolean("block_popups", true)
+        websiteColorScheme = prefs.getString("website_color_scheme", "light") ?: "light"
         applyTheme()
 
         val contentBlockingSettings = ContentBlocking.Settings.Builder()
@@ -199,10 +203,13 @@ class MainActivity : AppCompatActivity() {
             GeckoRuntimeSettings.Builder()
                 .contentBlocking(contentBlockingSettings)
                 .javaScriptEnabled(javascriptEnabled)
+                .preferredColorScheme(websiteColorSchemeCode())
                 .consoleOutput(false)
                 .remoteDebuggingEnabled(false)
                 .build()
         ).also { sharedRuntime = it }
+        // A shared GeckoRuntime may outlive Activity recreation; reconcile the active preference too.
+        runtime.settings.setPreferredColorScheme(websiteColorSchemeCode())
         trackingProtectionEnabled = prefs.getBoolean("tracking_protection_enabled", true)
         installMediaScanner()
         geckoView = GeckoView(this).apply {
@@ -321,25 +328,35 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        when {
-            currentPage == "lock" -> super.onBackPressed()
-            websiteFullscreen -> cur?.session?.exitFullScreen()
-            currentPage == "browse" && canGoBack -> cur?.session?.goBack()
-            currentPage == "browse" && screenBackStack.isNotEmpty() -> {
-                val destination = screenBackStack.removeLast()
-                restoringScreen = true
-                try { show(destination) } finally { restoringScreen = false }
+    /** Predictive back (targetSdk 36) never calls onBackPressed(), so back is handled by a dispatcher callback. */
+    private val backCallback = object : androidx.activity.OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            when {
+                currentPage == "lock" -> passBackToSystem()
+                websiteFullscreen -> cur?.session?.exitFullScreen()
+                currentPage == "browse" && canGoBack -> cur?.session?.goBack()
+                // Browser may be the visible child of Settings/Downloads/VPN. Restore that
+                // screen before treating Back as an exit to Home.
+                currentPage == "browse" && screenBackStack.isNotEmpty() -> {
+                    val destination = screenBackStack.removeLast()
+                    restoringScreen = true
+                    try { show(destination) } finally { restoringScreen = false }
+                }
+                currentPage == "browse" -> show("home")
+                screenBackStack.isNotEmpty() -> {
+                    val destination = screenBackStack.removeLast()
+                    restoringScreen = true
+                    try { show(destination) } finally { restoringScreen = false }
+                }
+                currentPage != "home" -> show("home")
+                else -> passBackToSystem()
             }
-            currentPage == "browse" -> show("home")
-            screenBackStack.isNotEmpty() -> {
-                val destination = screenBackStack.removeLast()
-                restoringScreen = true
-                try { show(destination) } finally { restoringScreen = false }
-            }
-            currentPage != "home" -> show("home")
-            else -> super.onBackPressed()
+        }
+
+        private fun passBackToSystem() {
+            isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+            isEnabled = true
         }
     }
 
@@ -378,6 +395,47 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- theme & privacy settings -----------------------------------------------------
+
+    private fun translucent(color: Int, alpha: Int): Int =
+        Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+
+    private fun websiteColorSchemeCode(): Int = when (websiteColorScheme.lowercase()) {
+        "dark" -> GeckoRuntimeSettings.COLOR_SCHEME_DARK
+        "system" -> GeckoRuntimeSettings.COLOR_SCHEME_SYSTEM
+        else -> GeckoRuntimeSettings.COLOR_SCHEME_LIGHT
+    }
+
+    private fun showWebsiteAppearance() {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Website appearance", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "This sets the web page's preferred color scheme. Light is the default to avoid sites unexpectedly choosing a black/dark page; some websites may still use their own colors.",
+                13f, Palette.MUTED
+            ).apply { setPadding(0, dp(8), 0, dp(14)); setLineSpacing(0f, 1.2f) }, matchWrap())
+            listOf(
+                Triple("light", "Light", "Prefer light website themes"),
+                Triple("system", "System", "Follow Android's appearance"),
+                Triple("dark", "Dark", "Prefer dark website themes")
+            ).forEach { (key, name, description) ->
+                val selected = websiteColorScheme == key
+                sheet.addView(
+                    listRow(
+                        well(icon(if (selected) Icons.SHIELD else Icons.SETTINGS, if (selected) Palette.ACCENT else Palette.MUTED, 20)),
+                        name, description,
+                        icon(if (selected) Icons.SHIELD else Icons.CHEVRON, Palette.ACCENT, 18)
+                    ) {
+                        websiteColorScheme = key
+                        prefs.edit().putString("website_color_scheme", key).apply()
+                        runtime.settings.setPreferredColorScheme(websiteColorSchemeCode())
+                        dialog.dismiss()
+                        cur?.session?.reload()
+                        Toast.makeText(this, "Website appearance updated", Toast.LENGTH_SHORT).show()
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+                )
+            }
+        }
+    }
 
     private fun systemIsDark() =
         (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -557,10 +615,10 @@ class MainActivity : AppCompatActivity() {
             elevation = dpf(6f)
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(accentSurface, surface, ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f))
+                intArrayOf(translucent(accentSurface, 222), translucent(surface, 214), translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f), 218))
             ).apply {
                 cornerRadius = dpf(30f)
-                setStroke(dp(1), outline)
+                setStroke(dp(1), translucent(outline, 155))
             }
         }
         data class NavItem(val key: String, val paths: List<String>, val description: String)
@@ -586,7 +644,7 @@ class MainActivity : AppCompatActivity() {
             }
             pill.addView(icon(item.paths, if (active) Palette.ACCENT else Palette.MUTED, 22))
             slot.addView(pill, FrameLayout.LayoutParams(dp(50), dp(40), Gravity.CENTER))
-            nav.addView(slot, lp(dp(58), dp(58)))
+            nav.addView(slot, lp(0, dp(58), 1f))
         }
         attachBottomBar(nav)
     }
@@ -625,8 +683,8 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "Address. Tap to edit"
             background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dpf(22f)
-                setColor(ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.035f else 0.075f))
-                setStroke(dp(1), ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.18f))
+                setColor(translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.035f else 0.075f), 216))
+                setStroke(dp(1), translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.18f), 115))
             }
             setOnClickListener {
                 if (dockHidden) setDockCollapsed(false) else showSearch(currentUrl)
@@ -676,7 +734,7 @@ class MainActivity : AppCompatActivity() {
                 when (vpnManager.status) {
                     VpnManager.Status.ON -> vpnManager.disconnect()
                     VpnManager.Status.CONNECTING -> Toast.makeText(this@MainActivity, "VPN is connecting…", Toast.LENGTH_SHORT).show()
-                    else -> if (vpnManager.hasConfig()) startVpn() else show("vpn")
+                    else -> if (vpnManager.hasConfig()) startVpn() else setupFreeVpnAndConnect()
                 }
                 postDelayed({
                     if (currentPage == "browse") showBrowser()
@@ -802,15 +860,17 @@ class MainActivity : AppCompatActivity() {
         dockHidden = false
         bar.alpha = 1f
         bar.translationY = 0f
+        // Main nav sits exactly on the page gutter (same edge as the cards); the browser dock is
+        // full-bleed, so it keeps a small fixed margin. Both get the same vertical spacing.
         root.addView(bar, lp(
-            if (matchWidth) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
             if (matchWidth) ViewGroup.LayoutParams.WRAP_CONTENT else dp(58)
         ).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = dp(if (matchWidth) 6 else 8)
-            bottomMargin = dp(if (matchWidth) 8 else 10)
-            leftMargin = dp(if (matchWidth) 12 else 20)
-            rightMargin = dp(if (matchWidth) 12 else 20)
+            topMargin = dp(8)
+            bottomMargin = dp(10)
+            leftMargin = dp(if (matchWidth) 16 else 0)
+            rightMargin = dp(if (matchWidth) 16 else 0)
         })
     }
 
@@ -1042,8 +1102,45 @@ class MainActivity : AppCompatActivity() {
         }
         // The page fills the whole content area; the address pill lives in the bottom dock.
         contentArea.addView(geckoView, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        mediaBanner = null
+        updateMediaBanner()
         addBrowserBar()
         revealBrowserChrome()
+    }
+
+    private var mediaBanner: View? = null
+    private val dismissedBanners = HashSet<String>()
+
+    /** UC/PlayIt-style prompt: when the page has playable media, offer Play (stream) or Download. */
+    private fun updateMediaBanner() {
+        if (currentPage != "browse") return
+        mediaBanner?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        mediaBanner = null
+        val tab = cur ?: return
+        if (tab.media.isEmpty() || websiteFullscreen || tab.url in dismissedBanners) return
+        val count = tab.media.size
+        val downloadableCount = tab.media.count { it.downloadable }
+        val banner = row().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(10), dp(10), dp(10))
+            neu(this, 20, Depth.CARD)
+        }
+        banner.addView(icon(Icons.DOWNLOAD, Palette.ACCENT, 18))
+        banner.addView(label(
+            if (count == 1) tab.media.first().qualityLabel else "$count media sources",
+            13f, Palette.TEXT, 1
+        ).apply { setPadding(dp(10), 0, dp(8), 0); maxLines = 2 }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (downloadableCount > 0) {
+            banner.addView(textButton("Download", primary = true) { showMediaSheet() })
+        }
+        banner.addView(iconButton(Icons.CLOSE, "Dismiss", Palette.MUTED, 34, 12, false) {
+            dismissedBanners.add(tab.url)
+            updateMediaBanner()
+        }, lp(dp(34), dp(34)).apply { leftMargin = dp(4) })
+        mediaBanner = banner
+        contentArea.addView(banner, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = dp(12); rightMargin = dp(12); topMargin = dp(8); bottomMargin = dp(8)
+        })
     }
 
     private fun navigate(raw: String) {
@@ -1107,6 +1204,7 @@ class MainActivity : AppCompatActivity() {
                 tab.blocked = 0
                 tab.media = emptyList()
                 tab.unsupportedMedia = 0
+                if (tab === cur) mediaBanner?.let { (it.parent as? ViewGroup)?.removeView(it); mediaBanner = null }
                 if (!tab.isPrivate && history.lastOrNull()?.url != url) {
                     history.add(HistoryEntry(url, "", System.currentTimeMillis()))
                     persistHistory()
@@ -1283,12 +1381,18 @@ class MainActivity : AppCompatActivity() {
         resetContent("bookmarks")
         val page = scrollPage()
         val add = iconButton(Icons.PLUS, "Bookmark current page", Palette.ACCENT) {
-            if (currentUrl.isNotBlank()) {
-                bookmarks.add(currentUrl)
-                persistBookmarks()
-                Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
-                showBookmarks()
-            } else Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
+            when {
+                cur?.isPrivate == true -> Toast.makeText(
+                    this, "Bookmarks are disabled in private tabs so this page is not saved.", Toast.LENGTH_LONG
+                ).show()
+                currentUrl.isNotBlank() -> {
+                    bookmarks.add(currentUrl)
+                    persistBookmarks()
+                    Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                    showBookmarks()
+                }
+                else -> Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
+            }
         }
         val header = row().apply { minimumHeight = dp(48) }
         header.addView(label("Bookmarks", 22f, Palette.TEXT, 1), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -1390,12 +1494,29 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString("history", array.toString()).apply()
     }
 
+    /** Prefer an actual audio/video MIME type; ignore generic octet-stream when a filename is known. */
+    private fun resolvePlaybackMime(name: String?, uri: Uri, rawMime: String?): String? {
+        val mime = rawMime?.substringBefore(';')?.trim()?.lowercase(java.util.Locale.ROOT)
+        if (mime != null && (
+                mime.startsWith("video/") || mime.startsWith("audio/") ||
+                    mime == "application/vnd.apple.mpegurl" ||
+                    mime == "application/x-mpegurl" ||
+                    mime == "audio/mpegurl" ||
+                    mime == "application/dash+xml"
+            )
+        ) return mime
+        val sourceName = name?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment.orEmpty()
+        val extension = sourceName.substringBefore('?').substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
+        return android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+    }
+
     private fun playMedia(uri: Uri, name: String?, mimeType: String? = null) {
+        val playbackMime = resolvePlaybackMime(name, uri, mimeType)
         startActivity(Intent(this, PlayerActivity::class.java).apply {
             data = uri
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             putExtra("name", name)
-            if (!mimeType.isNullOrBlank()) putExtra("mime_type", mimeType)
+            if (!playbackMime.isNullOrBlank()) putExtra("mime_type", playbackMime)
         })
     }
 
@@ -1618,9 +1739,14 @@ class MainActivity : AppCompatActivity() {
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    private fun startUrlDownload(url: String, isPrivate: Boolean, privateFolder: Boolean = false) {
+    private fun startUrlDownload(
+        url: String,
+        isPrivate: Boolean,
+        privateFolder: Boolean = false,
+        suggestedFileName: String? = null
+    ) {
         requestDownloadNotifications()
-        downloads.enqueueUrl(url, isPrivate, privateFolder)
+        downloads.enqueueUrl(url, isPrivate, privateFolder, suggestedFileName)
         Toast.makeText(this, if (privateFolder || isPrivate) "Saving to the private folder" else "Download started", Toast.LENGTH_SHORT).show()
     }
 
@@ -1682,12 +1808,20 @@ class MainActivity : AppCompatActivity() {
         val card = column().apply {
             setPadding(dp(18), dp(14), dp(18), dp(14))
             neu(this, 24, Depth.CARD, pressable = item.state == DlState.DONE)
-            if (item.state == DlState.DONE) setOnClickListener { showDownloadActions(item) }
-            setOnLongClickListener {
-                showDownloadActions(item)
-                true
+            if (item.state == DlState.DONE) setOnClickListener {
+                val kind = MediaDetect.kindFromExtension(item.name)
+                val playable = DownloadNaming.isMediaMime(item.mime) ||
+                    kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO
+                if (playable && item.savedUri != null) {
+                    playMedia(Uri.parse(item.savedUri), item.name, item.mime)
+                    return@setOnClickListener
+                }
+                val intent = downloads.openIntent(item)
+                try { if (intent != null) startActivity(intent) else throw IllegalStateException() }
+                catch (_: Exception) { Toast.makeText(this@MainActivity, "No app can open this file", Toast.LENGTH_SHORT).show() }
             }
         }
+        if (item.state == DlState.DONE) card.setOnLongClickListener { showDownloadActions(item); true }
         val top = row()
         val iconPaths = if (item.state == DlState.FAILED) Icons.INFO else Icons.DOWNLOAD
         top.addView(well(icon(iconPaths, if (item.state == DlState.FAILED) Palette.MUTED else Palette.ACCENT, 20)))
@@ -2076,6 +2210,7 @@ class MainActivity : AppCompatActivity() {
         ) { enabled -> setAppLock(enabled) }
         actionRow(Icons.SHIELD, "Privacy", "Blocked trackers, cookies, JavaScript") { show("privacy") }
         actionRow(Icons.SETTINGS, "Appearance", "Theme: ${if (themeKey == Themes.SYSTEM) "System" else Themes.byKey(themeKey).name}") { show("appearance") }
+        actionRow(Icons.SETTINGS, "Website appearance", "Light, dark or Android system page colors") { showWebsiteAppearance() }
         actionRow(Icons.LOCK, "Private Space", "Encrypted notes and files") { show("private") }
         actionRow(Icons.SHIELD, "VPN", vpnSubtitle()) { show("vpn") }
         actionRow(Icons.CLOCK, "History", "Pages visited in normal tabs") { show("history") }
@@ -2121,11 +2256,14 @@ class MainActivity : AppCompatActivity() {
         if (files.isEmpty() && running.isEmpty()) {
             page.addView(emptyState(
                 Icons.LOCK, "Nothing here yet",
-                "Choose Private on a detected video, or paste a link in Downloads and tap Private."
+                "Download a supported media source, then long-press the completed download and choose Move to private folder."
             ))
         }
         files.forEach { file ->
-            val media = MediaDetect.kindFromExtension(file.name).let { it == DetectedMedia.Kind.VIDEO || it == DetectedMedia.Kind.AUDIO }
+            val fileMime = downloads.items.firstOrNull { it.inPrivateFolder && it.name == file.name }?.mime
+                ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+            val media = DownloadNaming.isMediaMime(fileMime) ||
+                MediaDetect.kindFromExtension(file.name).let { it == DetectedMedia.Kind.VIDEO || it == DetectedMedia.Kind.AUDIO }
             val delete = iconButton(Icons.TRASH, "Delete ${file.name}") {
                 showConfirmSheet("Delete this file?", file.name, "Delete") {
                     file.delete()
@@ -2137,199 +2275,241 @@ class MainActivity : AppCompatActivity() {
             val fileRow = listRow(
                 well(icon(if (media) Icons.PLAY else Icons.FILE, Palette.ACCENT, 20)),
                 file.name, DownloadNaming.formatBytes(file.length()), delete
-            ) { openPrivateFile(file) }
-            fileRow.setOnLongClickListener { showPrivateFileActions(file); true }
-            page.addView(fileRow, matchWrap().apply { bottomMargin = dp(16) })
+            ) {
+                val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+                if (media) playMedia(uri, file.name, fileMime)
+                else try {
+                    startActivity(Intent(Intent.ACTION_VIEW).apply {
+                        data = uri
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    })
+                } catch (_: Exception) {
+                    Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
+                }
+            }.also { row -> row.setOnLongClickListener { showPrivateFileActions(file); true } },
+                matchWrap().apply { bottomMargin = dp(16) })
         }
         addMainNav("downloads")
     }
 
-    private fun openPrivateFile(file: java.io.File) {
-        if (!file.isFile) {
-            Toast.makeText(this, "The private file is unavailable", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
-        val kind = MediaDetect.kindFromExtension(file.name)
-        if (kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO) {
-            playMedia(uri, file.name, java.net.URLConnection.guessContentTypeFromName(file.name))
-        } else try {
-            startActivity(Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, java.net.URLConnection.guessContentTypeFromName(file.name) ?: "*/*")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            })
-        } catch (_: Exception) {
-            Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun showPrivateFileActions(file: java.io.File) {
-        if (!file.isFile) return
-        val savedItem = downloads.items.firstOrNull {
-            it.state == DlState.DONE && it.inPrivateFolder && it.name == file.name
-        }
-        if (savedItem != null) {
-            showDownloadActions(savedItem)
-            return
-        }
-        showSheet { sheet, dialog ->
-            sheet.addView(label(file.name, 17f, Palette.TEXT, 1).apply {
-                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-            }, matchWrap())
-            sheet.addView(label("${DownloadNaming.formatBytes(file.length())} · Private app storage · Not encrypted", 12f, Palette.MUTED)
-                .apply { setPadding(0, dp(6), 0, dp(14)) }, matchWrap())
-            fun action(title: String, description: String, paths: List<String> = Icons.FILE, run: () -> Unit) {
-                sheet.addView(listRow(well(icon(paths, Palette.ACCENT, 18)), title, description) {
-                    dialog.dismiss()
-                    run()
-                }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    bottomMargin = dp(8)
-                })
-            }
-            action("Open / Play", "Open with Veyra or another app", Icons.PLAY) { openPrivateFile(file) }
-            action("Share", "Share only after choosing a destination", Icons.SHARE) { sharePrivateFile(file) }
-            action("Rename", "Rename without overwriting another private file", Icons.FILE) { showRenamePrivateFileSheet(file) }
-            action("Move out of Private Folder", "Copy to Downloads, then remove the private copy", Icons.DOWNLOAD) {
-                val moved = movePrivateFileOut(file)
-                Toast.makeText(this, if (moved) "Moved to Downloads" else "Could not safely move this file", Toast.LENGTH_LONG).show()
-                if (moved) showPrivateFolder()
-            }
-            action("File details", "Filename, size and timestamps", Icons.INFO) { showPrivateFileDetails(file) }
-            action("Delete", "Permanently remove this private file", Icons.TRASH) {
-                showConfirmSheet("Delete this private file?", file.name, "Delete") {
-                    val deleted = file.delete()
-                    if (deleted) downloads.items.toList().filter { it.inPrivateFolder && it.name == file.name }
-                        .forEach { downloads.delete(it, false) }
-                    Toast.makeText(this, if (deleted) "File deleted" else "Could not delete the file", Toast.LENGTH_LONG).show()
-                    showPrivateFolder()
-                }
-            }
-        }
-    }
-
-    private fun sharePrivateFile(file: java.io.File) {
-        if (!file.isFile) return
+    private fun shareUri(uri: Uri, mime: String?) {
         try {
-            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
-            val share = Intent(Intent.ACTION_SEND).apply {
-                type = java.net.URLConnection.guessContentTypeFromName(file.name) ?: "*/*"
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = mime?.takeIf { it.isNotBlank() } ?: "*/*"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                clipData = android.content.ClipData.newRawUri(file.name, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            startActivity(Intent.createChooser(share, "Share private file"))
+            startActivity(Intent.createChooser(send, "Share"))
         } catch (_: Exception) {
-            Toast.makeText(this, "Could not share this file", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Nothing can receive this file", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun showRenamePrivateFileSheet(file: java.io.File) {
+    /** One row inside the long-press action sheets. */
+    private fun sheetAction(paths: List<String>, text: String, danger: Boolean = false, onClick: () -> Unit): View =
+        row().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(14), dp(8), dp(14))
+            isClickable = true
+            setOnClickListener { onClick() }
+            addView(icon(paths, if (danger) 0xFFFF6B6B.toInt() else Palette.ACCENT, 20))
+            addView(label(text, 15f, if (danger) 0xFFFF6B6B.toInt() else Palette.TEXT, 1).apply { setPadding(dp(16), 0, 0, 0) })
+        }
+
+    private fun showRenameSheet(current: String, onRename: (String) -> String?, onDone: () -> Unit) {
         showSheet { sheet, dialog ->
-            sheet.addView(label("Rename private file", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label("Rename", 18f, Palette.TEXT, 1), matchWrap())
             val input = EditText(this).apply {
-                setText(file.name)
-                setSingleLine(true)
+                setText(current)
+                setSelection(current.substringBeforeLast('.', current).length)
                 setTextColor(Palette.TEXT)
-                setHintTextColor(Palette.MUTED)
-                setPadding(dp(18), 0, dp(18), 0)
-                neu(this, 24, Depth.FIELD, inset = true)
+                textSize = 15f
+                setSingleLine(true)
+                setPadding(dp(20), 0, dp(20), 0)
+                neu(this, 26, Depth.FIELD, inset = true)
             }
-            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
-                topMargin = dp(16); bottomMargin = dp(18)
-            })
+            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(16); bottomMargin = dp(18) })
             val actions = row().apply { gravity = Gravity.END }
             actions.addView(textButton("Cancel") { dialog.dismiss() })
             actions.addView(textButton("Save", primary = true) {
-                val raw = input.text.toString().trim()
-                if (raw.isBlank() || !file.isFile) {
-                    Toast.makeText(this, "Enter a valid filename", Toast.LENGTH_SHORT).show()
-                    return@textButton
-                }
-                val safe = DownloadNaming.fileName("filename=\"$raw\"", file.name)
-                val ext = file.name.substringAfterLast('.', "").takeIf { it.isNotBlank() }
-                val candidate = if ('.' !in safe && ext != null) "$safe.$ext" else safe
-                val reserved = (downloads.takenNames() - file.name).toMutableSet().apply {
-                    file.parentFile?.listFiles()?.filter { it.isFile && it.name != file.name }?.forEach { add(it.name) }
-                }
-                val newName = DownloadNaming.uniqueName(candidate, reserved)
-                val target = java.io.File(file.parentFile, newName)
-                if (target.exists() || !file.renameTo(target)) {
-                    Toast.makeText(this, "Could not rename the file", Toast.LENGTH_LONG).show()
-                } else {
-                    dialog.dismiss()
-                    showPrivateFolder()
-                }
-            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+                val error = onRename(input.text.toString())
+                if (error == null) { dialog.dismiss(); onDone() }
+                else Toast.makeText(this, error, Toast.LENGTH_SHORT).show()
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
             sheet.addView(actions, matchWrap())
+            input.post { input.requestFocus() }
         }
     }
 
-    private fun movePrivateFileOut(file: java.io.File): Boolean {
-        val privateRoot = DownloadCenter.privateDir(this).canonicalFile
-        if (!file.isFile || file.canonicalFile.parentFile != privateRoot) return false
-        val publicNames = downloads.items.filter { !it.inPrivateFolder }.map { it.name }.toSet()
-        val name = DownloadNaming.uniqueName(file.name, publicNames)
-        val mime = java.net.URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream"
-        if (android.os.Build.VERSION.SDK_INT >= 29) {
-            val values = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
-                put(android.provider.MediaStore.Downloads.MIME_TYPE, mime)
-                put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/Veyra")
-                put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
-            try {
-                contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
-                    ?: throw java.io.IOException("Could not write file")
-                val sizeMatches = contentResolver.openInputStream(uri)?.use { input ->
-                    var copied = 0L
-                    val buffer = ByteArray(32 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        copied += count
+    /** Long-press menu for a finished download. */
+    private fun showDownloadActions(item: DownloadItem) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label(item.name, 16f, Palette.TEXT, 1).apply {
+                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, matchWrap())
+            sheet.addView(label(DownloadNaming.formatBytes(item.total), 12f, Palette.MUTED).apply { setPadding(0, dp(4), 0, dp(10)) }, matchWrap())
+            val uri = item.savedUri?.let { Uri.parse(it) }
+            val playable = DownloadNaming.isMediaMime(item.mime) || MediaDetect.kindFromExtension(item.name)
+                .let { it == DetectedMedia.Kind.VIDEO || it == DetectedMedia.Kind.AUDIO }
+            if (uri != null && playable) sheet.addView(sheetAction(Icons.PLAY, "Play in Veyra") {
+                dialog.dismiss(); playMedia(uri, item.name, item.mime)
+            }, matchWrap())
+            if (uri != null) sheet.addView(sheetAction(Icons.SHARE, "Share") { dialog.dismiss(); shareUri(uri, item.mime) }, matchWrap())
+            sheet.addView(sheetAction(Icons.EDIT, "Rename") {
+                dialog.dismiss()
+                showRenameSheet(item.name, { downloads.rename(item, it) }) { }
+            }, matchWrap())
+            if (!item.inPrivateFolder && !item.isPrivate) sheet.addView(sheetAction(Icons.LOCK, "Move to private folder") {
+                dialog.dismiss()
+                Thread {
+                    val ok = downloads.moveToPrivate(item)
+                    runOnUiThread {
+                        Toast.makeText(this, if (ok) "Moved to private folder" else "Could not move this file", Toast.LENGTH_SHORT).show()
+                        if (currentPage == "downloads") refreshDownloads()
                     }
-                    copied == file.length()
-                } ?: false
-                if (!sizeMatches) throw java.io.IOException("The copied file size did not match")
-                val published = android.content.ContentValues().apply {
-                    put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
-                }
-                if (contentResolver.update(uri, published, null, null) <= 0) throw java.io.IOException("Could not publish the file")
-                if (!file.delete()) throw java.io.IOException("Could not remove the private source")
-                return true
-            } catch (_: Exception) {
-                runCatching { contentResolver.delete(uri, null, null) }
-                return false
-            }
+                }.start()
+            }, matchWrap())
+            if (item.inPrivateFolder && !item.isPrivate) sheet.addView(sheetAction(Icons.DOWNLOAD, "Move out of private folder") {
+                dialog.dismiss()
+                Thread {
+                    val file = java.io.File(DownloadCenter.privateDir(this), item.name)
+                    val ok = downloads.moveOutOfPrivate(file)
+                    runOnUiThread {
+                        Toast.makeText(this, if (ok) "Moved to Downloads/Veyra" else "Could not move this file", Toast.LENGTH_SHORT).show()
+                        if (currentPage == "pfolder") showPrivateFolder()
+                        else if (currentPage == "downloads") refreshDownloads()
+                    }
+                }.start()
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.INFO, "File details") {
+                dialog.dismiss()
+                showDownloadDetails(item)
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.TRASH, "Delete", danger = true) {
+                dialog.dismiss()
+                showConfirmSheet("Delete this file?", item.name, "Delete") { downloads.delete(item, deleteFile = true) }
+            }, matchWrap())
         }
-        val targetDir = java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra").apply { mkdirs() }
-        val target = java.io.File(targetDir, name)
-        return try {
-            file.copyTo(target, overwrite = false)
-            if (target.length() != file.length() || !file.delete()) {
-                target.delete()
-                false
-            } else true
-        } catch (_: Exception) {
-            target.delete()
-            false
+    }
+
+    /** Long-press menu for a file inside the private folder. */
+    private fun showPrivateFileActions(file: java.io.File) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label(file.name, 16f, Palette.TEXT, 1).apply {
+                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, matchWrap())
+            sheet.addView(label(DownloadNaming.formatBytes(file.length()), 12f, Palette.MUTED).apply { setPadding(0, dp(4), 0, dp(10)) }, matchWrap())
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+            val itemMime = downloads.items.firstOrNull { it.inPrivateFolder && it.name == file.name }?.mime
+                ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+            val kind = MediaDetect.kindFromExtension(file.name)
+            val playable = DownloadNaming.isMediaMime(itemMime) ||
+                kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO
+            sheet.addView(sheetAction(if (playable) Icons.PLAY else Icons.FILE, "Open / Play") {
+                dialog.dismiss()
+                if (playable) playMedia(uri, file.name, itemMime)
+                else try {
+                    startActivity(Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, itemMime ?: "*/*")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    })
+                } catch (_: Exception) {
+                    Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
+                }
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.SHARE, "Share") {
+                dialog.dismiss()
+                shareUri(uri, itemMime)
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.EDIT, "Rename") {
+                dialog.dismiss()
+                showRenameSheet(file.name, { downloads.renamePrivateFile(file, it) }) { showPrivateFolder() }
+            }, matchWrap())
+            if (!downloads.items.any { it.inPrivateFolder && it.name == file.name && it.isPrivate }) {
+                sheet.addView(sheetAction(Icons.DOWNLOAD, "Move out of private folder") {
+                    dialog.dismiss()
+                    Thread {
+                        val ok = downloads.moveOutOfPrivate(file)
+                        runOnUiThread {
+                            Toast.makeText(this, if (ok) "Moved to Downloads/Veyra" else "Could not move this file", Toast.LENGTH_SHORT).show()
+                            if (currentPage == "pfolder") showPrivateFolder()
+                        }
+                    }.start()
+                }, matchWrap())
+            }
+            sheet.addView(sheetAction(Icons.INFO, "File details") {
+                dialog.dismiss()
+                showPrivateFileDetails(file)
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.TRASH, "Delete", danger = true) {
+                dialog.dismiss()
+                showConfirmSheet("Delete this file?", file.name, "Delete") {
+                    file.delete()
+                    downloads.items.toList().filter { it.inPrivateFolder && it.name == file.name }
+                        .forEach { downloads.delete(it, false) }
+                    showPrivateFolder()
+                }
+            }, matchWrap())
+        }
+    }
+
+    private fun showDownloadDetails(item: DownloadItem) {
+        showSheet { sheet ->
+            sheet.addView(label("File details", 18f, Palette.TEXT, 1), matchWrap())
+            val modified = runCatching {
+                val localDir = if (item.inPrivateFolder) DownloadCenter.privateDir(this)
+                    else java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra")
+                val local = java.io.File(localDir, item.name)
+                if (local.isFile) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(local.lastModified()))
+                else {
+                    val uri = item.savedUri?.let { Uri.parse(it) }
+                    val value = if (uri != null && uri.scheme == "content") {
+                        contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.DATE_MODIFIED), null, null, null)
+                            ?.use { cursor ->
+                                if (cursor.moveToFirst()) cursor.getLong(0).takeIf { it > 0 }?.times(1000L) else null
+                            }
+                    } else null
+                    value?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "Unknown"
+                }
+            }.getOrDefault("Unknown")
+            val fields = listOf(
+                "Name" to item.name,
+                "Size" to DownloadNaming.formatBytes(item.total),
+                "Type" to (item.mime ?: "Unknown"),
+                "Status" to item.state.name.lowercase().replaceFirstChar { it.uppercase() },
+                "Location" to if (item.inPrivateFolder) "Veyra Private folder (app storage)" else "Downloads/Veyra",
+                "Last modified" to modified,
+                "Source" to hostOf(item.url).ifBlank { "Local file" }
+            )
+            fields.forEach { (name, value) ->
+                sheet.addView(label(name, 11f, Palette.MUTED).apply { setPadding(0, dp(10), 0, dp(2)) }, matchWrap())
+                sheet.addView(label(value, 14f, Palette.TEXT).apply {
+                    maxLines = 3
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }, matchWrap())
+            }
         }
     }
 
     private fun showPrivateFileDetails(file: java.io.File) {
         showSheet { sheet ->
             sheet.addView(label("File details", 18f, Palette.TEXT, 1), matchWrap())
-            val rows = listOf(
+            val mime = downloads.items.firstOrNull { it.inPrivateFolder && it.name == file.name }?.mime
+                ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+                ?: "Unknown"
+            val fields = listOf(
                 "Name" to file.name,
                 "Size" to DownloadNaming.formatBytes(file.length()),
-                "Type" to (java.net.URLConnection.guessContentTypeFromName(file.name) ?: "Unknown"),
-                "Location" to "Veyra private app storage (not encrypted)",
-                "Modified" to DateFormat.getDateTimeInstance().format(Date(file.lastModified()))
+                "Type" to mime,
+                "Location" to "Veyra Private folder (app storage, not encrypted)",
+                "Last modified" to java.text.DateFormat.getDateTimeInstance().format(java.util.Date(file.lastModified()))
             )
-            rows.forEach { (name, value) ->
+            fields.forEach { (name, value) ->
                 sheet.addView(label(name, 11f, Palette.MUTED).apply { setPadding(0, dp(10), 0, dp(2)) }, matchWrap())
-                sheet.addView(label(value, 14f, Palette.TEXT).apply { maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END }, matchWrap())
+                sheet.addView(label(value, 14f, Palette.TEXT).apply {
+                    maxLines = 3
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }, matchWrap())
             }
         }
     }
@@ -2339,16 +2519,93 @@ class MainActivity : AppCompatActivity() {
         "spotify.com", "disneyplus.com", "sonyliv.com", "zee5.com"
     )
 
-    /** "Paste a link, then download": direct files download; web pages open so videos can be detected. */
+    private data class LinkInspection(
+        val statusCode: Int,
+        val mimeType: String?,
+        val contentLength: Long,
+        val finalUrl: String,
+        val error: String? = null,
+        val suggestedFileName: String? = null
+    )
+
+    /** Inspect metadata in the background without reading the full media body into memory. */
+    private fun inspectLink(url: String): LinkInspection {
+        var connection: java.net.HttpURLConnection? = null
+        try {
+            val head = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                connectTimeout = 10_000
+                readTimeout = 12_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Veyra")
+                setRequestProperty("Accept", "*/*")
+            }
+            connection = head
+            var status = head.responseCode
+            var mime = head.contentType?.substringBefore(';')?.trim()
+            var length = head.contentLengthLong
+            var finalUrl = head.url.toString()
+            var disposition = head.getHeaderField("Content-Disposition")
+            val unsupportedRedirect = !DownloadNaming.isHttpUrl(finalUrl)
+            if (unsupportedRedirect) {
+                return LinkInspection(status, mime, length, finalUrl, "This link redirects to an unsupported URL type.")
+            }
+            val finalHost = hostOf(finalUrl).lowercase()
+            if (streamingHosts.any { finalHost == it || finalHost.endsWith(".$it") }) {
+                return LinkInspection(status, mime, length, finalUrl, "This website must use its original player. Veyra will not extract protected streams.")
+            }
+
+            // Some legitimate file servers reject HEAD or omit its metadata. Probe one byte only.
+            val needsProbe = status == 405 || status == 501 || (status in 200..299 && mime.isNullOrBlank())
+            connection.disconnect()
+            connection = null
+            if (needsProbe) {
+                val probe = (java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 10_000
+                    readTimeout = 12_000
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "Veyra")
+                    setRequestProperty("Accept", "*/*")
+                    setRequestProperty("Range", "bytes=0-0")
+                }
+                connection = probe
+                status = probe.responseCode
+                mime = probe.contentType?.substringBefore(';')?.trim()
+                disposition = probe.getHeaderField("Content-Disposition") ?: disposition
+                val rangeTotal = probe.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                length = rangeTotal ?: probe.contentLengthLong
+                finalUrl = probe.url.toString()
+                if (status in 200..299) {
+                    // Never consume the whole response if a server ignores Range.
+                    runCatching { probe.inputStream.use { it.read() } }
+                }
+            }
+            if (!DownloadNaming.isHttpUrl(finalUrl)) {
+                return LinkInspection(status, mime, length, finalUrl, "This link redirects to an unsupported URL type.")
+            }
+            if (status !in 200..299) {
+                return LinkInspection(status, mime, length, finalUrl, "The server replied with HTTP $status. The link may have expired or require sign-in.")
+            }
+            val suggestedName = disposition?.takeIf { it.isNotBlank() }?.let { DownloadNaming.fileName(it, finalUrl) }
+            return LinkInspection(status, mime, length, finalUrl, suggestedFileName = suggestedName)
+        } catch (_: Exception) {
+            return LinkInspection(-1, null, -1, url, "Could not inspect this link. Check the connection and the URL.")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    /** Classify pasted links after redirects and HTTP metadata have been checked. */
     private fun showLinkDownloadSheet() {
         showSheet { sheet, dialog ->
             sheet.addView(label("Download from a link", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Paste a direct link to a video, audio or file (mp4, webm, mp3, zip...). For a web page, Veyra opens it and " +
-                    "lists the videos it can find under Media on this page. Protected streaming sites such as YouTube and " +
-                    "Netflix cannot be downloaded.",
+                "Paste a direct video, audio or file link. Veyra checks redirects and media metadata first. " +
+                    "Ordinary webpages open in the browser; protected streaming services must use their own player.",
                 13f, Palette.MUTED
-            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(16)) }, matchWrap())
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(12)) }, matchWrap())
+
             val input = EditText(this).apply {
                 hint = "https://"
                 setHintTextColor(Palette.MUTED)
@@ -2359,8 +2616,27 @@ class MainActivity : AppCompatActivity() {
                 setPadding(dp(20), 0, dp(20), 0)
                 neu(this, 26, Depth.FIELD, inset = true)
             }
-            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(20) })
-            fun resolvedUrl(): String? {
+            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(10) })
+
+            val statusLabel = label("", 12f, Palette.MUTED).apply {
+                visibility = View.GONE
+                setLineSpacing(0f, 1.15f)
+            }
+            sheet.addView(statusLabel, matchWrap().apply { bottomMargin = dp(12) })
+
+            var checking = false
+            val actionButtons = ArrayList<TextView>(2)
+            fun setChecking(value: Boolean) {
+                checking = value
+                actionButtons.forEach { button ->
+                    button.isEnabled = !value
+                    button.alpha = if (value) 0.55f else 1f
+                }
+                if (value) statusLabel.text = "Checking redirects and media type…"
+                statusLabel.visibility = if (value || statusLabel.text.isNotBlank()) View.VISIBLE else View.GONE
+            }
+
+            fun resolveUrl(): String? {
                 val raw = input.text.toString().trim()
                 return when {
                     DownloadNaming.isHttpUrl(raw) -> raw
@@ -2368,60 +2644,125 @@ class MainActivity : AppCompatActivity() {
                     else -> null
                 }
             }
-            fun go(toPrivateFolder: Boolean) {
-                val url = resolvedUrl()
+
+            fun runAction(playOnly: Boolean) {
+                if (checking) return
+                val url = resolveUrl()
                 if (url == null) {
-                    Toast.makeText(this, "Paste a valid http(s) link", Toast.LENGTH_SHORT).show()
+                    statusLabel.text = "Paste a valid HTTP(S) link."
+                    statusLabel.visibility = View.VISIBLE
                     return
                 }
-                val host = hostOf(url).lowercase()
-                if (streamingHosts.any { host == it || host.endsWith(".$it") }) {
-                    Toast.makeText(this, "This site uses protected streams that Veyra cannot download.", Toast.LENGTH_LONG).show()
+                val initialHost = hostOf(url).lowercase()
+                if (streamingHosts.any { initialHost == it || initialHost.endsWith(".$it") }) {
+                    statusLabel.text = "This protected website must use its original player. Veyra will not extract its streams."
+                    statusLabel.visibility = View.VISIBLE
                     return
                 }
-                val kind = MediaDetect.kindFromExtension(url)
-                if (kind == DetectedMedia.Kind.STREAM) {
-                    dialog.dismiss()
-                    Toast.makeText(this, "Streams can be played but not saved as one file.", Toast.LENGTH_LONG).show()
-                    playMedia(Uri.parse(url), null)
-                } else if (kind != null || DownloadNaming.looksLikeDirectFile(url)) {
-                    dialog.dismiss()
-                    startUrlDownload(url, cur?.isPrivate == true, toPrivateFolder)
-                } else if (toPrivateFolder) {
-                    Toast.makeText(this, "This is a webpage, not a direct file. Open it first, then choose Media on this page → Private.", Toast.LENGTH_LONG).show()
-                } else {
-                    dialog.dismiss()
-                    Toast.makeText(this, "Opening the page. Use Media on this page for supported videos.", Toast.LENGTH_LONG).show()
-                    navigate(url)
-                }
+
+                setChecking(true)
+                Thread {
+                    val result = inspectLink(url)
+                    runOnUiThread {
+                        if (!dialog.isShowing) return@runOnUiThread
+                        setChecking(false)
+                        if (result.error != null) {
+                            statusLabel.text = result.error
+                            statusLabel.visibility = View.VISIBLE
+                            return@runOnUiThread
+                        }
+
+                        val finalHost = hostOf(result.finalUrl).lowercase()
+                        if (streamingHosts.any { finalHost == it || finalHost.endsWith(".$it") }) {
+                            statusLabel.text = "The link redirects to a protected streaming service. Use its website or official app."
+                            statusLabel.visibility = View.VISIBLE
+                            return@runOnUiThread
+                        }
+
+                        val finalUrl = result.finalUrl
+                        val mime = result.mimeType?.substringBefore(';')?.trim()
+                        val kind = MediaDetect.kindFromExtension(finalUrl) ?: MediaDetect.kindFromMime(mime.orEmpty())
+                        val htmlPage = mime.equals("text/html", ignoreCase = true) ||
+                            mime.equals("application/xhtml+xml", ignoreCase = true)
+                        val uri = Uri.parse(finalUrl)
+                        val playbackMime = mime ?: when (MediaDetect.kindFromExtension(finalUrl)) {
+                            DetectedMedia.Kind.STREAM ->
+                                if (MediaDetect.extensionOf(finalUrl) == "mpd") "application/dash+xml"
+                                else "application/vnd.apple.mpegurl"
+                            else -> null
+                        }
+
+                        when {
+                            htmlPage -> {
+                                if (playOnly) {
+                                    statusLabel.text = "This link is a webpage, not a direct media file. Open it in Veyra and use Media on this page."
+                                    statusLabel.visibility = View.VISIBLE
+                                } else {
+                                    dialog.dismiss()
+                                    navigate(finalUrl)
+                                }
+                            }
+                            kind == DetectedMedia.Kind.STREAM -> {
+                                if (playOnly) {
+                                    dialog.dismiss()
+                                    playMedia(uri, null, playbackMime)
+                                } else {
+                                    statusLabel.text = "This is a segmented stream, not a single downloadable file. Use Play / Stream when the source permits it."
+                                    statusLabel.visibility = View.VISIBLE
+                                }
+                            }
+                            kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO -> {
+                                dialog.dismiss()
+                                if (playOnly) playMedia(uri, null, playbackMime)
+                                else startUrlDownload(
+                                    finalUrl,
+                                    cur?.isPrivate == true,
+                                    suggestedFileName = result.suggestedFileName
+                                )
+                            }
+                            !playOnly && !mime.isNullOrBlank() && !htmlPage -> {
+                                // A known non-HTML MIME type is a direct resource even without an extension.
+                                dialog.dismiss()
+                                startUrlDownload(
+                                    finalUrl,
+                                    cur?.isPrivate == true,
+                                    suggestedFileName = result.suggestedFileName
+                                )
+                            }
+                            !playOnly && DownloadNaming.looksLikeDirectFile(finalUrl) -> {
+                                dialog.dismiss()
+                                startUrlDownload(
+                                    finalUrl,
+                                    cur?.isPrivate == true,
+                                    suggestedFileName = result.suggestedFileName
+                                )
+                            }
+                            else -> {
+                                if (playOnly) {
+                                    statusLabel.text = "Veyra couldn't confirm a direct media file at this URL. Open the page first, then use Media on this page."
+                                    statusLabel.visibility = View.VISIBLE
+                                } else {
+                                    dialog.dismiss()
+                                    navigate(finalUrl)
+                                }
+                            }
+                        }
+                    }
+                }.apply { name = "veyra-link-inspector"; isDaemon = true }.start()
             }
-            val playRow = row().apply { gravity = Gravity.CENTER }
-            playRow.addView(textButton("Play / Stream") {
-                val url = resolvedUrl()
-                if (url == null) {
-                    Toast.makeText(this, "Paste a valid http(s) link", Toast.LENGTH_SHORT).show()
-                    return@textButton
-                }
-                val host = hostOf(url).lowercase()
-                if (streamingHosts.any { host == it || host.endsWith(".$it") }) {
-                    Toast.makeText(this, "This protected website must use its original player.", Toast.LENGTH_LONG).show()
-                    return@textButton
-                }
-                if (MediaDetect.kindFromExtension(url) == null) {
-                    Toast.makeText(this, "Only direct media links can be played here. For a webpage, open it in Veyra first.", Toast.LENGTH_LONG).show()
-                    return@textButton
-                }
-                dialog.dismiss()
-                playMedia(Uri.parse(url), null)
-            }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            playRow.addView(textButton("Download", primary = true) { go(false) },
-                lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
-            sheet.addView(playRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            val mainActions = row().apply { gravity = Gravity.CENTER }
+            val playButton = textButton("Play / Stream", primary = true) { runAction(playOnly = true) }
+            val downloadButton = textButton("Download") { runAction(playOnly = false) }
+            actionButtons.add(playButton)
+            actionButtons.add(downloadButton)
+            mainActions.addView(playButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            mainActions.addView(downloadButton, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+            sheet.addView(mainActions, matchWrap())
+
             val secondaryActions = row().apply { gravity = Gravity.END }
             secondaryActions.addView(textButton("Cancel") { dialog.dismiss() },
-                lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            secondaryActions.addView(textButton("Private") { go(true) },
-                lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             sheet.addView(secondaryActions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(10)
             })
@@ -2439,10 +2780,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupFreeVpn() {
-        Toast.makeText(this, "Setting up the free VPN...", Toast.LENGTH_SHORT).show()
+    /** One tap: create a free WARP profile on this device, then ask for VPN permission and connect. */
+    private fun setupFreeVpnAndConnect() {
+        Toast.makeText(this, "Setting up free VPN…", Toast.LENGTH_SHORT).show()
         VpnManager.get(this).provisionFree { error ->
-            if (error == null) startVpn() else Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+            if (error == null) startVpn()
+            else Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+            if (currentPage == "vpn") showVpn()
         }
     }
 
@@ -2467,13 +2811,102 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveVpnConfig(text: String) {
-        try {
-            VpnManager.get(this).saveConfig(text)
-            Toast.makeText(this, "VPN config saved (encrypted)", Toast.LENGTH_SHORT).show()
-        } catch (e: IllegalArgumentException) {
-            Toast.makeText(this, e.message ?: "Invalid config", Toast.LENGTH_LONG).show()
+        showSaveVpnProfileSheet(text)
+    }
+
+    private fun showSaveVpnProfileSheet(configText: String) {
+        val endpoint = VpnConfigSummary.of(configText).endpoints.firstOrNull().orEmpty()
+        val host = endpoint.substringBefore(':').lowercase()
+        val suggestedName = when {
+            Regex("""(^|[.-])(us|usa|unitedstates)([.-]|$)""").containsMatchIn(host) -> "United States"
+            Regex("""(^|[.-])(nl|nld|netherlands)([.-]|$)""").containsMatchIn(host) -> "Netherlands"
+            host.isNotBlank() -> host.take(36)
+            else -> "WireGuard server"
         }
-        if (currentPage == "vpn") showVpn()
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Save VPN server profile", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "Name this imported server (for example United States or Netherlands). The endpoint and private key stay in app storage; the config is encrypted with Android Keystore.",
+                13f, Palette.MUTED
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
+            val nameInput = EditText(this).apply {
+                setText(suggestedName)
+                setSingleLine(true)
+                setTextColor(Palette.TEXT)
+                setHintTextColor(Palette.MUTED)
+                textSize = 15f
+                setPadding(dp(18), 0, dp(18), 0)
+                neu(this, 24, Depth.FIELD, inset = true)
+            }
+            sheet.addView(nameInput, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(18) })
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Cancel") { dialog.dismiss() })
+            actions.addView(textButton("Save profile", primary = true) {
+                try {
+                    val profile = VpnManager.get(this).saveProfile(configText, nameInput.text.toString())
+                    dialog.dismiss()
+                    Toast.makeText(
+                        this,
+                        if (profile.active) "Profile saved and selected: ${profile.name}"
+                        else "Profile saved. Disconnect the active VPN before switching to it.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    if (currentPage == "vpn") showVpn()
+                } catch (e: Exception) {
+                    Toast.makeText(this, e.message ?: "Could not save this WireGuard profile", Toast.LENGTH_LONG).show()
+                }
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+            sheet.addView(actions, matchWrap())
+        }
+    }
+
+    private fun showFreeVpnProvidersSheet() {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Free VPN locations", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "Veyra connects through a real WireGuard profile; it does not run VPN servers itself. Proton VPN lists free servers in the United States and Netherlands, but profile generation and country availability depend on its current account/plan rules. Choose your country on the provider page, download the .conf file, then import it in Veyra.",
+                13f, Palette.MUTED
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
+
+            listOf(
+                Triple("United States", "Choose a US server in Proton's WireGuard profile generator", "us"),
+                Triple("Netherlands", "Choose a Netherlands server in Proton's WireGuard profile generator", "nl")
+            ).forEach { (country, detail, _) ->
+                sheet.addView(
+                    listRow(
+                        well(icon(Icons.SHIELD, Palette.ACCENT, 20)),
+                        country,
+                        detail,
+                        icon(Icons.CHEVRON, Palette.MUTED, 18)
+                    ) {
+                        dialog.dismiss()
+                        openExternalPage("https://account.protonvpn.com/downloads#wireguard-config")
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+                )
+            }
+            sheet.addView(
+                listRow(
+                    well(icon(Icons.INFO, Palette.ACCENT, 20)),
+                    "Free server locations and limits",
+                    "Check current Proton VPN Free availability",
+                    icon(Icons.CHEVRON, Palette.MUTED, 18)
+                ) {
+                    dialog.dismiss()
+                    openExternalPage("https://protonvpn.com/support/change-server-free-plan")
+                },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
+            )
+            sheet.addView(label(
+                "Veyra won't invent credentials or report a country connection before the imported tunnel is actually up. Switching locations requires importing/selecting the corresponding profile and disconnecting before switching.",
+                12f, Palette.MUTED
+            ).apply { setLineSpacing(0f, 1.2f) }, matchWrap())
+        }
+    }
+
+    private fun openExternalPage(url: String) {
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        catch (_: Exception) { Toast.makeText(this, "Could not open the provider page", Toast.LENGTH_SHORT).show() }
     }
 
     private fun showVpn() {
@@ -2488,6 +2921,7 @@ class MainActivity : AppCompatActivity() {
         page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(22) })
 
         val status = vpn.status
+        val vpnSummary = vpn.summary()
         val card = column().apply {
             setPadding(dp(22), dp(20), dp(22), dp(20))
             neu(this, 26, Depth.CARD)
@@ -2505,11 +2939,23 @@ class MainActivity : AppCompatActivity() {
         ).apply { setPadding(0, dp(8), 0, dp(6)) })
         card.addView(label(
             when {
-                status == VpnManager.Status.ON -> "All apps on this device use the tunnel while it is on."
+                status == VpnManager.Status.ON -> when {
+                    vpnSummary != null && vpnSummary.routesAllTraffic && vpnSummary.dns.isNotEmpty() ->
+                        "The tunnel is up and the profile includes default routes for both IPv4 and IPv6. A kill switch is not provided."
+                    vpnSummary != null && vpnSummary.routesAllTraffic ->
+                        "The profile routes IPv4 and IPv6 by default, but specifies no DNS server. DNS behavior may depend on Android and the network."
+                    vpnSummary?.routesAllIpv4 == true ->
+                        "The tunnel is up, but only IPv4 has a default route. IPv6 traffic may bypass the tunnel."
+                    vpnSummary?.routesAllIpv6 == true ->
+                        "The tunnel is up, but only IPv6 has a default route. IPv4 traffic may bypass the tunnel."
+                    vpnSummary != null && vpnSummary.allowedIps.isNotEmpty() ->
+                        "The tunnel is up, but only the profile's listed routes use it. Other traffic may bypass the tunnel."
+                    else -> "The tunnel reports as up, but Veyra could not confirm its routing rules."
+                }
                 status == VpnManager.Status.DISCONNECTING -> "Disconnecting the tunnel and releasing its resources…"
                 status == VpnManager.Status.ERROR -> vpn.lastError ?: "Something went wrong."
                 vpn.hasConfig() -> "Tap Connect to start the tunnel."
-                else -> "Turn on the free VPN with one tap, or import your own WireGuard profile."
+                else -> "Tap Turn on free VPN for one-tap protection, or import a WireGuard profile for a specific country."
             },
             13f, Palette.MUTED
         ).apply { setLineSpacing(0f, 1.2f) })
@@ -2517,7 +2963,11 @@ class MainActivity : AppCompatActivity() {
 
         if (!vpn.hasConfig() && status != VpnManager.Status.CONNECTING) {
             page.addView(
-                textButton("Turn on free VPN", primary = true) { setupFreeVpn() },
+                textButton("Turn on free VPN", primary = true) { setupFreeVpnAndConnect() },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) }
+            )
+            page.addView(
+                textButton("Choose a country (Proton profile)") { showFreeVpnProvidersSheet() },
                 lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
             )
         }
@@ -2525,29 +2975,70 @@ class MainActivity : AppCompatActivity() {
         val countryNote = column().apply {
             setPadding(dp(18), dp(16), dp(18), dp(16))
             neu(this, 22, Depth.CARD)
-            addView(label("About the free VPN", 15f, Palette.TEXT, 1))
+            addView(label("Use a real provider profile", 15f, Palette.TEXT, 1))
             addView(label(
-                "Cloudflare WARP is free and encrypts traffic, but it does not provide a US/Netherlands location selector. Veyra does not operate its own free VPN servers. " +
-                    "To connect through a US or Netherlands server, import a valid WireGuard profile from a provider that offers that location. The one-tap WARP setup relies on an unofficial consumer API and may stop working.",
+                "Turn on free VPN uses Cloudflare WARP: one tap, no account, but you cannot pick a country and Cloudflare's sign-up interface is unofficial, so it may stop working. For a specific country, import a WireGuard profile from a provider you trust.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) })
         }
         page.addView(countryNote, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
 
+        val profiles = vpn.profiles()
+        if (profiles.isNotEmpty()) {
+            page.addView(label("SAVED SERVER PROFILES", 11f, Palette.MUTED, 1).apply {
+                letterSpacing = 0.12f
+                setPadding(dp(4), dp(4), 0, dp(10))
+            }, matchWrap())
+            profiles.forEach { profile ->
+                val detail = buildString {
+                    if (profile.active) append("Active profile · ")
+                    append(profile.endpoint.ifBlank { "WireGuard endpoint not available" })
+                }
+                page.addView(
+                    listRow(
+                        well(icon(if (profile.active) Icons.SHIELD else Icons.SHIELD_OFF,
+                            if (profile.active) Palette.ACCENT else Palette.MUTED, 20)),
+                        profile.name,
+                        detail,
+                        icon(if (profile.active) Icons.SHIELD else Icons.CHEVRON, Palette.ACCENT, 18)
+                    ) {
+                        if (profile.active) return@listRow
+                        if (vpn.status == VpnManager.Status.ON || vpn.status == VpnManager.Status.CONNECTING ||
+                            vpn.status == VpnManager.Status.DISCONNECTING) {
+                            Toast.makeText(this, "Disconnect the current tunnel before switching servers", Toast.LENGTH_LONG).show()
+                        } else try {
+                            vpn.selectProfile(profile.id)
+                            Toast.makeText(this, "Selected ${profile.name}", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(this, e.message ?: "Could not select this server", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+                )
+            }
+            page.addView(label(
+                "Tap a saved profile to select it. Disconnect first before switching servers. Profiles are encrypted locally; Veyra connects only to the endpoints in the imported config.",
+                12f, Palette.MUTED
+            ).apply { setPadding(dp(4), dp(2), dp(4), dp(14)); setLineSpacing(0f, 1.2f) }, matchWrap())
+        }
+
         if (vpn.hasConfig()) {
             val busy = status == VpnManager.Status.CONNECTING || status == VpnManager.Status.DISCONNECTING
             val on = status == VpnManager.Status.ON
+            val actionLabel = when {
+                on -> "Disconnect"
+                status == VpnManager.Status.DISCONNECTING -> "Disconnecting…"
+                status == VpnManager.Status.CONNECTING -> "Connecting…"
+                else -> "Connect"
+            }
             page.addView(
-                textButton(
-                    if (on) "Disconnect" else if (status == VpnManager.Status.DISCONNECTING) "Disconnecting…" else if (busy) "Connecting…" else "Connect",
-                    primary = !on
-                ) {
+                textButton(actionLabel, primary = !on) {
                     if (busy) return@textButton
                     if (on) vpn.disconnect() else startVpn()
                 },
                 lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
             )
-            val summary = vpn.summary()
+            val summary = vpnSummary
             if (summary != null) {
                 val info = column().apply {
                     setPadding(dp(22), dp(18), dp(22), dp(18))
@@ -2568,7 +3059,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val actions = row()
-        actions.addView(textButton(if (vpn.hasConfig()) "Replace file" else "Import file", primary = !vpn.hasConfig()) {
+        actions.addView(textButton(if (vpn.hasConfig()) "Import another profile" else "Import WireGuard profile", primary = !vpn.hasConfig()) {
             vpnImport.launch(arrayOf("*/*"))
         }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         actions.addView(textButton("Paste") {
@@ -2579,10 +3070,19 @@ class MainActivity : AppCompatActivity() {
         }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(14) })
         page.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
         if (vpn.hasConfig()) {
-            page.addView(textButton("Remove config") {
-                showConfirmSheet("Remove VPN config?", "The saved WireGuard config is deleted from this device.", "Remove") {
-                    vpn.deleteConfig()
-                    show("vpn")
+            page.addView(textButton("Remove active profile") {
+                val active = vpn.profiles().firstOrNull { it.active }
+                showConfirmSheet(
+                    "Remove active VPN profile?",
+                    "The encrypted active config will be removed. Other saved profiles remain available.",
+                    "Remove"
+                ) {
+                    try {
+                        if (active != null) vpn.deleteProfile(active.id) else vpn.deleteConfig()
+                        show("vpn")
+                    } catch (e: Exception) {
+                        Toast.makeText(this, e.message ?: "Disconnect the VPN before removing it", Toast.LENGTH_LONG).show()
+                    }
                 }
             }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
         }
@@ -2626,6 +3126,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     tab.media = result.items
                     tab.unsupportedMedia = result.unsupported
+                    if (tab === cur) updateMediaBanner()
                 }
                 return null
             }
@@ -2635,40 +3136,63 @@ class MainActivity : AppCompatActivity() {
     private fun showMediaSheet() {
         val tab = cur ?: return
         showSheet { sheet, dialog ->
-            sheet.addView(label("Media on this page", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label("Choose video quality", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Choose Download for eligible direct media. Protected or browser-managed streams must remain in the website player.",
+                "Select one detected media source, then download it. Quality is shown only when Veyra can infer it from page metadata or the URL; unknown quality is labelled honestly. Protected streams stay in the website player.",
                 13f, Palette.MUTED
-            ).apply { setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
-            val list = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
-            tab.media.forEach { media ->
-                val card = column().apply {
-                    setPadding(dp(16), dp(14), dp(16), dp(14))
-                    neu(this, 20, Depth.BUTTON)
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
+
+            val candidates = tab.media.filter { it.downloadable }
+            var selected: DetectedMedia? = candidates.firstOrNull()
+            val list = column().apply { setPadding(dp(6), dp(4), dp(6), dp(4)) }
+            fun renderOptions() {
+                list.removeAllViews()
+                candidates.forEach { media ->
+                    val isSelected = selected?.url == media.url
+                    val card = column().apply {
+                        setPadding(dp(14), dp(13), dp(14), dp(13))
+                        neu(this, 18, if (isSelected) Depth.WELL else Depth.BUTTON)
+                        isClickable = true
+                        isFocusable = true
+                        contentDescription = "${media.qualityLabel}, ${media.fileName}"
+                        setOnClickListener {
+                            selected = media
+                            renderOptions()
+                        }
+                    }
+                    val headline = row()
+                    headline.addView(icon(
+                        if (media.kind == DetectedMedia.Kind.AUDIO) Icons.FILE else Icons.PLAY,
+                        if (isSelected) Palette.ACCENT else Palette.MUTED, 18
+                    ))
+                    headline.addView(label(media.qualityLabel, 14f, Palette.TEXT, 1).apply {
+                        setPadding(dp(10), 0, 0, 0)
+                    }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    if (isSelected) headline.addView(label("SELECTED", 9f, Palette.ACCENT, 1))
+                    card.addView(headline, matchWrap())
+                    card.addView(label(
+                        "${media.title.ifBlank { media.fileName }} · ${hostOf(media.url)}",
+                        12f, Palette.MUTED
+                    ).apply {
+                        maxLines = 2
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        setPadding(dp(28), dp(5), 0, 0)
+                    }, matchWrap())
+                    list.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = dp(10)
+                    })
                 }
-                card.addView(label(media.title.ifBlank { media.fileName }, 14f, Palette.TEXT, 1).apply {
-                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                })
-                val kind = when (media.kind) {
-                    DetectedMedia.Kind.VIDEO -> "Video"
-                    DetectedMedia.Kind.AUDIO -> "Audio"
-                    DetectedMedia.Kind.STREAM -> "Stream"
-                }
-                card.addView(label("$kind · ${hostOf(media.url)} · ${media.fileName}", 12f, Palette.MUTED).apply {
-                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                    setPadding(0, dp(4), 0, dp(10))
-                })
-                val actions = row()
-                if (media.downloadable) {
-                    actions.addView(textButton("Download", primary = true) {
-                        dialog.dismiss()
-                        startUrlDownload(media.url, tab.isPrivate)
-                    }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                } else {
-                    actions.addView(label("Download unavailable for this source", 12f, Palette.MUTED))
-                }
-                card.addView(actions, matchWrap())
-                list.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
+            }
+            if (candidates.isEmpty()) {
+                list.addView(label(
+                    if (tab.unsupportedMedia > 0 || tab.media.any { it.kind == DetectedMedia.Kind.STREAM })
+                        "No direct downloadable file was found. This video may use a protected or segmented stream; keep using the website's own player."
+                    else
+                        "No downloadable video source was detected yet. Start the video on the page and open this menu again.",
+                    13f, Palette.MUTED
+                ).apply { setLineSpacing(0f, 1.2f); setPadding(dp(6), dp(8), dp(6), dp(8)) }, matchWrap())
+            } else {
+                renderOptions()
             }
             val scroller = ScrollView(this).apply {
                 clipChildren = false; clipToPadding = false
@@ -2677,13 +3201,20 @@ class MainActivity : AppCompatActivity() {
             }
             sheet.addView(scroller, lp(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                if (tab.media.size > 2) dp(340) else ViewGroup.LayoutParams.WRAP_CONTENT
+                if (candidates.size > 3) dp(300) else ViewGroup.LayoutParams.WRAP_CONTENT
             ))
             if (tab.unsupportedMedia > 0) {
                 sheet.addView(label(
-                    "${tab.unsupportedMedia} browser-managed media source(s) cannot be saved as ordinary files. Veyra will not extract DRM-protected streams; use the website player for these sources.",
+                    "${tab.unsupportedMedia} browser-managed source(s) cannot be saved as an ordinary file. Veyra does not extract DRM-protected media.",
                     12f, Palette.MUTED
                 ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(10), 0, 0) }, matchWrap())
+            }
+            if (candidates.isNotEmpty()) {
+                sheet.addView(textButton("Download", primary = true) {
+                    val media = selected ?: return@textButton
+                    dialog.dismiss()
+                    startUrlDownload(media.url, tab.isPrivate, suggestedFileName = media.fileName)
+                }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
             }
         }
     }
@@ -2736,29 +3267,44 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showBrowserMenu(anchor: View) {
-        showSideSheet(anchor) { sheet, dialog ->
+        showSideSheet(anchor) { sheet, popup ->
             fun item(paths: List<String>, text: String, action: () -> Unit) {
                 val rowView = row().apply {
                     setPadding(dp(12), dp(6), dp(12), dp(6))
                     minimumHeight = dp(44)
                     neu(this, 16, Depth.BUTTON, pressable = true)
-                    setOnClickListener { dialog.dismiss(); action() }
+                    setOnClickListener { popup.dismiss(); action() }
                 }
                 rowView.addView(icon(paths, Palette.ACCENT, 18))
                 rowView.addView(label(text, 14f, Palette.TEXT, 1).apply { setPadding(dp(10), 0, 0, 0) })
                 sheet.addView(rowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { bottomMargin = dp(6) })
             }
             item(Icons.BOOKMARK, "Bookmark this page") {
+                val tab = cur
+                when {
+                    tab?.isPrivate == true -> Toast.makeText(
+                        this, "Bookmarks are disabled in private tabs so this page is not saved.", Toast.LENGTH_LONG
+                    ).show()
+                    currentUrl.isBlank() -> Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
+                    else -> {
+                        bookmarks.add(currentUrl); persistBookmarks()
+                        Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            item(Icons.SHARE, "Share page") {
                 if (currentUrl.isNotBlank()) {
-                    bookmarks.add(currentUrl); persistBookmarks()
-                    Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                    startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, currentUrl)
+                    }, "Share page"))
                 }
             }
             if (DownloadNaming.looksPlayable(currentUrl)) {
                 item(Icons.PLAY, "Play in Veyra") { playMedia(Uri.parse(currentUrl), null) }
             }
             cur?.let { tab ->
-                if (tab.media.isNotEmpty() || tab.unsupportedMedia > 0) {
+                if (tab.media.isNotEmpty() || tab.unsupportedMedia > 0 || hostOf(tab.url).let { h -> streamingHosts.any { h == it || h.endsWith(".$it") } }) {
                     val count = tab.media.size
                     item(Icons.PLAY, if (count > 0) "Media on this page ($count)" else "Media on this page") { showMediaSheet() }
                 }
@@ -2896,50 +3442,58 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Compact right-side action drawer used by the browser's three-dot menu. */
-    private fun showSideSheet(anchor: View, build: (LinearLayout, Dialog) -> Unit) {
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+    /** Compact, scrollable menu positioned against the three-dot toolbar action. */
+    private fun showSideSheet(anchor: View, build: (LinearLayout, PopupWindow) -> Unit) {
         val sheet = column().apply {
-            setPadding(dp(12), dp(14), dp(12), dp(14))
-            neu(this, 24, Depth.CARD)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            neu(this, 22, Depth.CARD)
             isClickable = true
         }
-        build(sheet, dialog)
         val scroller = ScrollView(this).apply {
+            clipChildren = false
             clipToPadding = false
             isFillViewport = false
             overScrollMode = View.OVER_SCROLL_NEVER
+            isVerticalScrollBarEnabled = false
             setPadding(0, dp(4), 0, dp(4))
-            addView(sheet, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         val screenWidth = resources.displayMetrics.widthPixels
-        val menuWidth = minOf(dp(276), (screenWidth - systemInsetLeft - systemInsetRight - dp(24)).coerceAtLeast(dp(220)))
-        val maxHeight = (resources.displayMetrics.heightPixels - systemInsetTop - systemInsetBottom - dp(24)).coerceAtLeast(dp(240))
+        val menuWidth = minOf(
+            dp(276),
+            (screenWidth - systemInsetLeft - systemInsetRight - dp(24)).coerceAtLeast(dp(220))
+        )
+        val maxHeight = (resources.displayMetrics.heightPixels - systemInsetTop - systemInsetBottom - dp(24))
+            .coerceAtLeast(dp(220))
+        scroller.addView(sheet, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        // Let the popup measure to its content, bounded to the visible screen. The old full-height
+        // Dialog dimmed and covered much of the webpage, making the menu look like a side drawer.
         scroller.measure(
             View.MeasureSpec.makeMeasureSpec(menuWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST)
         )
         val menuHeight = scroller.measuredHeight.coerceIn(dp(180), maxHeight)
-        dialog.setContentView(scroller)
-        dialog.setCanceledOnTouchOutside(true)
-        dialog.show()
-        val anchorPosition = IntArray(2)
-        anchor.getLocationOnScreen(anchorPosition)
-        val y = (anchorPosition[1] + anchor.height - menuHeight).coerceAtLeast(systemInsetTop + dp(8))
-        dialog.window?.apply {
+        val popup = PopupWindow(scroller, menuWidth, menuHeight, true).apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setLayout(menuWidth, menuHeight)
-            setGravity(Gravity.TOP or Gravity.END)
-            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            attributes = attributes.apply {
-                dimAmount = 0.18f
-                this.y = y
-                // Align the popup's right edge with the actual three-dot anchor, not the screen edge.
-                this.x = (screenWidth - anchorPosition[0] - anchor.width).coerceAtLeast(dp(8))
-            }
+            isOutsideTouchable = true
+            elevation = dpf(14f)
+            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
-        dialog.window?.setLayout(menuWidth, menuHeight)
+        build(sheet, popup)
+        // Re-measure after the rows are inserted so the anchor position matches the actual menu.
+        scroller.measure(
+            View.MeasureSpec.makeMeasureSpec(menuWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST)
+        )
+        val height = scroller.measuredHeight.coerceIn(dp(180), maxHeight)
+        popup.height = height
+        val position = IntArray(2)
+        anchor.getLocationOnScreen(position)
+        val maxTop = (resources.displayMetrics.heightPixels - systemInsetBottom - height - dp(8))
+            .coerceAtLeast(systemInsetTop + dp(8))
+        val y = (position[1] + anchor.height - height)
+            .coerceIn(systemInsetTop + dp(8), maxTop)
+        popup.showAtLocation(root, Gravity.TOP or Gravity.END, systemInsetRight + dp(12), y)
     }
 
     private fun showSheet(build: (LinearLayout) -> Unit) = showSheet { sheet, _ -> build(sheet) }

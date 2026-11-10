@@ -14,9 +14,17 @@ data class VpnConfigSummary(
     val hasInterface: Boolean,
     val hasPrivateKey: Boolean
 ) {
-    /** True when all traffic is routed through the tunnel (0.0.0.0/0 or ::/0). */
+    /** True when the profile includes the IPv4 default route. */
+    val routesAllIpv4: Boolean
+        get() = allowedIps.any { it == "0.0.0.0/0" }
+
+    /** True when the profile includes the IPv6 default route. */
+    val routesAllIpv6: Boolean
+        get() = allowedIps.any { it == "::/0" }
+
+    /** Both IP families must have default routes before describing this as all-traffic routing. */
     val routesAllTraffic: Boolean
-        get() = allowedIps.any { it == "0.0.0.0/0" || it == "::/0" }
+        get() = routesAllIpv4 && routesAllIpv6
 
     companion object {
         fun of(text: String): VpnConfigSummary {
