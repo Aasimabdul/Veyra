@@ -126,6 +126,19 @@ class PlayerActivity : AppCompatActivity() {
         val divider = View(this).apply { setBackgroundColor(0x557F91AA) }
         quickControls.addView(divider, LinearLayout.LayoutParams(dp(1), dp(22)))
         quickControls.addView(fitButton, LinearLayout.LayoutParams(dp(64), dp(40)))
+        val qualityButton = control("QUALITY", "Choose video quality") {
+            val activePlayer = player
+            if (activePlayer == null) {
+                showError("Video quality options are available after playback starts.")
+            } else {
+                TrackSelectionDialogBuilder(this, "Video quality", activePlayer, C.TRACK_TYPE_VIDEO)
+                    .build()
+                    .show()
+            }
+        }
+        quickControls.addView(View(this).apply { setBackgroundColor(0x557F91AA) },
+            LinearLayout.LayoutParams(dp(1), dp(22)))
+        quickControls.addView(qualityButton, LinearLayout.LayoutParams(dp(78), dp(40)))
         val audioButton = control("AUDIO", "Choose audio track or language") {
             val activePlayer = player
             if (activePlayer == null) {
