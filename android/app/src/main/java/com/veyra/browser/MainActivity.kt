@@ -2559,6 +2559,7 @@ class MainActivity : AppCompatActivity() {
         page.addView(header, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(22) })
 
         val status = vpn.status
+        val vpnSummary = vpn.summary()
         val card = column().apply {
             setPadding(dp(22), dp(20), dp(22), dp(20))
             neu(this, 26, Depth.CARD)
@@ -2576,7 +2577,19 @@ class MainActivity : AppCompatActivity() {
         ).apply { setPadding(0, dp(8), 0, dp(6)) })
         card.addView(label(
             when {
-                status == VpnManager.Status.ON -> "All apps on this device use the tunnel while it is on."
+                status == VpnManager.Status.ON -> when {
+                    vpnSummary?.routesAllTraffic == true && vpnSummary.dns.isNotEmpty() ->
+                        "The tunnel is up and the profile includes default routes for both IPv4 and IPv6. A kill switch is not provided."
+                    vpnSummary?.routesAllTraffic == true ->
+                        "The profile routes IPv4 and IPv6 by default, but specifies no DNS server. DNS behavior may depend on Android and the network."
+                    vpnSummary?.routesAllIpv4 == true ->
+                        "The tunnel is up, but only IPv4 has a default route. IPv6 traffic may bypass the tunnel."
+                    vpnSummary?.routesAllIpv6 == true ->
+                        "The tunnel is up, but only IPv6 has a default route. IPv4 traffic may bypass the tunnel."
+                    vpnSummary != null && vpnSummary.allowedIps.isNotEmpty() ->
+                        "The tunnel is up, but only the profile's listed routes use it. Other traffic may bypass the tunnel."
+                    else -> "The tunnel reports as up, but Veyra could not confirm its routing rules."
+                }
                 status == VpnManager.Status.DISCONNECTING -> "Disconnecting the tunnel and releasing its resources…"
                 status == VpnManager.Status.ERROR -> vpn.lastError ?: "Something went wrong."
                 vpn.hasConfig() -> "Tap Connect to start the tunnel."
@@ -2620,7 +2633,7 @@ class MainActivity : AppCompatActivity() {
                 },
                 lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
             )
-            val summary = vpn.summary()
+            val summary = vpnSummary
             if (summary != null) {
                 val info = column().apply {
                     setPadding(dp(22), dp(18), dp(22), dp(18))
