@@ -2114,14 +2114,19 @@ class MainActivity : AppCompatActivity() {
                 dialog.dismiss()
                 showRenameSheet(item.name, { downloads.rename(item, it) }) { }
             }, matchWrap())
-            if (!item.inPrivateFolder) sheet.addView(sheetAction(Icons.LOCK, "Move to private folder") {
+            if (!item.inPrivateFolder && !item.isPrivate) sheet.addView(sheetAction(Icons.LOCK, "Move to private folder") {
                 dialog.dismiss()
                 Thread {
                     val ok = downloads.moveToPrivate(item)
                     runOnUiThread {
                         Toast.makeText(this, if (ok) "Moved to private folder" else "Could not move this file", Toast.LENGTH_SHORT).show()
+                        if (currentPage == "downloads") refreshDownloads()
                     }
                 }.start()
+            }, matchWrap())
+            sheet.addView(sheetAction(Icons.INFO, "File details") {
+                dialog.dismiss()
+                showDownloadDetails(item)
             }, matchWrap())
             sheet.addView(sheetAction(Icons.TRASH, "Delete", danger = true) {
                 dialog.dismiss()
@@ -2138,25 +2143,46 @@ class MainActivity : AppCompatActivity() {
             }, matchWrap())
             sheet.addView(label(DownloadNaming.formatBytes(file.length()), 12f, Palette.MUTED).apply { setPadding(0, dp(4), 0, dp(10)) }, matchWrap())
             val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+            val itemMime = downloads.items.firstOrNull { it.inPrivateFolder && it.name == file.name }?.mime
+                ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+            val kind = MediaDetect.kindFromExtension(file.name)
+            val playable = DownloadNaming.isMediaMime(itemMime) ||
+                kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO
+            sheet.addView(sheetAction(if (playable) Icons.PLAY else Icons.FILE, "Open / Play") {
+                dialog.dismiss()
+                if (playable) playMedia(uri, file.name, itemMime)
+                else try {
+                    startActivity(Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, itemMime ?: "*/*")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    })
+                } catch (_: Exception) {
+                    Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
+                }
+            }, matchWrap())
             sheet.addView(sheetAction(Icons.SHARE, "Share") {
                 dialog.dismiss()
-                val itemMime = downloads.items.firstOrNull { it.inPrivateFolder && it.name == file.name }?.mime
-                    ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
                 shareUri(uri, itemMime)
             }, matchWrap())
             sheet.addView(sheetAction(Icons.EDIT, "Rename") {
                 dialog.dismiss()
                 showRenameSheet(file.name, { downloads.renamePrivateFile(file, it) }) { showPrivateFolder() }
             }, matchWrap())
-            sheet.addView(sheetAction(Icons.DOWNLOAD, "Move out of private folder") {
+            if (!downloads.items.any { it.inPrivateFolder && it.name == file.name && it.isPrivate }) {
+                sheet.addView(sheetAction(Icons.DOWNLOAD, "Move out of private folder") {
+                    dialog.dismiss()
+                    Thread {
+                        val ok = downloads.moveOutOfPrivate(file)
+                        runOnUiThread {
+                            Toast.makeText(this, if (ok) "Moved to Downloads/Veyra" else "Could not move this file", Toast.LENGTH_SHORT).show()
+                            if (currentPage == "pfolder") showPrivateFolder()
+                        }
+                    }.start()
+                }, matchWrap())
+            }
+            sheet.addView(sheetAction(Icons.INFO, "File details") {
                 dialog.dismiss()
-                Thread {
-                    val ok = downloads.moveOutOfPrivate(file)
-                    runOnUiThread {
-                        Toast.makeText(this, if (ok) "Moved to Downloads/Veyra" else "Could not move this file", Toast.LENGTH_SHORT).show()
-                        if (currentPage == "pfolder") showPrivateFolder()
-                    }
-                }.start()
+                showPrivateFileDetails(file)
             }, matchWrap())
             sheet.addView(sheetAction(Icons.TRASH, "Delete", danger = true) {
                 dialog.dismiss()
@@ -2167,6 +2193,67 @@ class MainActivity : AppCompatActivity() {
                     showPrivateFolder()
                 }
             }, matchWrap())
+        }
+    }
+
+    private fun showDownloadDetails(item: DownloadItem) {
+        showSheet { sheet ->
+            sheet.addView(label("File details", 18f, Palette.TEXT, 1), matchWrap())
+            val modified = runCatching {
+                val localDir = if (item.inPrivateFolder) DownloadCenter.privateDir(this)
+                    else java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Veyra")
+                val local = java.io.File(localDir, item.name)
+                if (local.isFile) android.text.format.DateFormat.getDateTimeInstance().format(java.util.Date(local.lastModified()))
+                else {
+                    val uri = item.savedUri?.let { Uri.parse(it) }
+                    val value = if (uri != null && uri.scheme == "content") {
+                        contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.DATE_MODIFIED), null, null, null)
+                            ?.use { cursor ->
+                                if (cursor.moveToFirst()) cursor.getLong(0).takeIf { it > 0 }?.times(1000L) else null
+                            }
+                    } else null
+                    value?.let { android.text.format.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "Unknown"
+                }
+            }.getOrDefault("Unknown")
+            val fields = listOf(
+                "Name" to item.name,
+                "Size" to DownloadNaming.formatBytes(item.total),
+                "Type" to (item.mime ?: "Unknown"),
+                "Status" to item.state.name.lowercase().replaceFirstChar { it.uppercase() },
+                "Location" to if (item.inPrivateFolder) "Veyra Private folder (app storage)" else "Downloads/Veyra",
+                "Last modified" to modified,
+                "Source" to hostOf(item.url).ifBlank { "Local file" }
+            )
+            fields.forEach { (name, value) ->
+                sheet.addView(label(name, 11f, Palette.MUTED).apply { setPadding(0, dp(10), 0, dp(2)) }, matchWrap())
+                sheet.addView(label(value, 14f, Palette.TEXT).apply {
+                    maxLines = 3
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }, matchWrap())
+            }
+        }
+    }
+
+    private fun showPrivateFileDetails(file: java.io.File) {
+        showSheet { sheet ->
+            sheet.addView(label("File details", 18f, Palette.TEXT, 1), matchWrap())
+            val mime = downloads.items.firstOrNull { it.inPrivateFolder && it.name == file.name }?.mime
+                ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+                ?: "Unknown"
+            val fields = listOf(
+                "Name" to file.name,
+                "Size" to DownloadNaming.formatBytes(file.length()),
+                "Type" to mime,
+                "Location" to "Veyra Private folder (app storage, not encrypted)",
+                "Last modified" to android.text.format.DateFormat.getDateTimeInstance().format(java.util.Date(file.lastModified()))
+            )
+            fields.forEach { (name, value) ->
+                sheet.addView(label(name, 11f, Palette.MUTED).apply { setPadding(0, dp(10), 0, dp(2)) }, matchWrap())
+                sheet.addView(label(value, 14f, Palette.TEXT).apply {
+                    maxLines = 3
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }, matchWrap())
+            }
         }
     }
 
