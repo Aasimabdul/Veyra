@@ -154,7 +154,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
 
     private fun contentUriNameExists(name: String): Boolean {
         if (Build.VERSION.SDK_INT < 29) return false
-        val selection = "\${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND \${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
+        val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
         return context.contentResolver.query(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
             arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
@@ -193,7 +193,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         val reserved = (items.filter { it !== item && it.inPrivateFolder }.map { it.name } +
             (directory.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList())).toSet()
         val targetName = DownloadNaming.uniqueName(item.name, reserved)
-        val staging = File(directory, ".move-\${item.id}.part")
+        val staging = File(directory, ".move-${item.id}.part")
         val target = File(directory, targetName)
         try {
             staging.delete()
@@ -204,7 +204,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
                 (item.total >= 0 && bytesCopied != item.total)) return false
             if (target.exists() || !staging.renameTo(target)) return false
             val privateUri = try {
-                FileProvider.getUriForFile(context, "\${context.packageName}.files", target)
+                FileProvider.getUriForFile(context, "${context.packageName}.files", target)
             } catch (e: Exception) {
                 target.delete()
                 return false
@@ -246,14 +246,14 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
                 if (!source.isFile) return "File not found"
                 if (target.exists()) return "A file with that name already exists"
                 if (!source.renameTo(target)) return "Could not rename this file"
-                item.savedUri = FileProvider.getUriForFile(context, "\${context.packageName}.files", target).toString()
+                item.savedUri = FileProvider.getUriForFile(context, "${context.packageName}.files", target).toString()
             }
             item.name = newName
             persist()
             changedNow()
             null
         } catch (e: Exception) {
-            "Could not rename: \${e.message ?: "unknown error"}"
+            "Could not rename: ${e.message ?: "unknown error"}"
         }
     }
 
@@ -267,7 +267,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         val target = File(privateRoot, newName)
         if (target.exists() || fileNameCollision(newName)) return "A file with that name already exists"
         if (!file.renameTo(target)) return "Could not rename this file"
-        val uri = FileProvider.getUriForFile(context, "\${context.packageName}.files", target).toString()
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", target).toString()
         items.filter { it.inPrivateFolder && it.name == file.name }.forEach {
             it.name = newName
             it.savedUri = uri
@@ -336,7 +336,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
                 file.copyTo(target, overwrite = false)
                 targetFile = target
                 if (target.length() != size) throw java.io.IOException("The copied file size did not match")
-                publishedUri = FileProvider.getUriForFile(context, "\${context.packageName}.files", target)
+                publishedUri = FileProvider.getUriForFile(context, "${context.packageName}.files", target)
             }
             if (!file.delete()) throw java.io.IOException("Could not remove the private copy")
             val outputUri = publishedUri ?: throw java.io.IOException("Saved URI missing")
