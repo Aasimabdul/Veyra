@@ -2182,7 +2182,7 @@ class MainActivity : AppCompatActivity() {
     private fun inspectLink(url: String): LinkInspection {
         var connection: java.net.HttpURLConnection? = null
         try {
-            connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            val head = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
                 requestMethod = "HEAD"
                 connectTimeout = 10_000
                 readTimeout = 12_000
@@ -2190,10 +2190,11 @@ class MainActivity : AppCompatActivity() {
                 setRequestProperty("User-Agent", "Veyra")
                 setRequestProperty("Accept", "*/*")
             }
-            var status = connection.responseCode
-            var mime = connection.contentType?.substringBefore(';')?.trim()
-            var length = connection.contentLengthLong
-            var finalUrl = connection.url.toString()
+            connection = head
+            var status = head.responseCode
+            var mime = head.contentType?.substringBefore(';')?.trim()
+            var length = head.contentLengthLong
+            var finalUrl = head.url.toString()
             val unsupportedRedirect = !DownloadNaming.isHttpUrl(finalUrl)
             if (unsupportedRedirect) {
                 return LinkInspection(status, mime, length, finalUrl, "This link redirects to an unsupported URL type.")
@@ -2208,7 +2209,7 @@ class MainActivity : AppCompatActivity() {
             connection.disconnect()
             connection = null
             if (needsProbe) {
-                connection = (java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection).apply {
+                val probe = (java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 10_000
                     readTimeout = 12_000
@@ -2217,14 +2218,15 @@ class MainActivity : AppCompatActivity() {
                     setRequestProperty("Accept", "*/*")
                     setRequestProperty("Range", "bytes=0-0")
                 }
-                status = connection.responseCode
-                mime = connection.contentType?.substringBefore(';')?.trim()
-                val rangeTotal = connection.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
-                length = rangeTotal ?: connection.contentLengthLong
-                finalUrl = connection.url.toString()
+                connection = probe
+                status = probe.responseCode
+                mime = probe.contentType?.substringBefore(';')?.trim()
+                val rangeTotal = probe.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                length = rangeTotal ?: probe.contentLengthLong
+                finalUrl = probe.url.toString()
                 if (status in 200..299) {
                     // Never consume the whole response if a server ignores Range.
-                    runCatching { connection.inputStream.use { it.read() } }
+                    runCatching { probe.inputStream.use { it.read() } }
                 }
             }
             if (!DownloadNaming.isHttpUrl(finalUrl)) {
