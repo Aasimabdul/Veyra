@@ -594,12 +594,19 @@ class MainActivity : AppCompatActivity() {
         val capsule = column().apply {
             setPadding(dp(10), dp(8), dp(10), dp(6))
             elevation = dpf(8f)
+            // Keep webpage content subtly visible through the floating dock.
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(accentSurface, surface, ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f))
+                intArrayOf(
+                    Color.argb(188, Color.red(accentSurface), Color.green(accentSurface), Color.blue(accentSurface)),
+                    Color.argb(176, Color.red(surface), Color.green(surface), Color.blue(surface)),
+                    Color.argb(184, Color.red(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f)),
+                        Color.green(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f)),
+                        Color.blue(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f)))
+                )
             ).apply {
                 cornerRadius = dpf(30f)
-                setStroke(dp(1), outline)
+                setStroke(dp(1), Color.argb(185, Color.red(outline), Color.green(outline), Color.blue(outline)))
             }
         }
 
@@ -718,14 +725,7 @@ class MainActivity : AppCompatActivity() {
             .apply { alpha = if (canGoForward) 1f else 0.4f }
         backButton = back
         forwardButton = forward
-        val share = cell(Icons.SHARE, "Share page") {
-            if (currentUrl.isNotBlank()) {
-                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, currentUrl)
-                }, "Share page"))
-            }
-        }
+        val home = cell(Icons.HOME, "Home") { show("home") }
         val tabsButton = LinearLayout(this).apply {
             gravity = Gravity.CENTER
             contentDescription = "Tabs, ${tabs.size} open"
@@ -740,7 +740,7 @@ class MainActivity : AppCompatActivity() {
         var menuAnchor: View? = null
         val menu = cell(Icons.MENU, "Menu", filled = true) { menuAnchor?.let { showBrowserMenu(it) } }
         menuAnchor = menu
-        listOf(back, forward, share, tabsButton, menu).forEach { actions.addView(it, lp(0, dp(44), 1f)) }
+        listOf(back, forward, home, tabsButton, menu).forEach { actions.addView(it, lp(0, dp(44), 1f)) }
         capsule.addView(actions, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(2) })
         browserActionRow = actions
 
@@ -966,11 +966,13 @@ class MainActivity : AppCompatActivity() {
         fun refreshSuggestions(raw: String) {
             suggestions.removeAllViews()
             val query = raw.trim().lowercase()
-            val candidates = (history.asReversed().map { Triple(it.title.ifBlank { hostOf(it.url) }, hostOf(it.url), it.url) } +
-                bookmarks.map { Triple(hostOf(it), hostOf(it), it) })
-                .distinctBy { it.third }
-                .filter { query.isBlank() || it.first.lowercase().contains(query) || it.second.lowercase().contains(query) || it.third.lowercase().contains(query) }
-                .take(5)
+            // Private tabs must not expose saved browsing/search suggestions.
+            val candidates = if (cur?.isPrivate == true) emptyList() else
+                (history.asReversed().map { Triple(it.title.ifBlank { hostOf(it.url) }, hostOf(it.url), it.url) } +
+                    bookmarks.map { Triple(hostOf(it), hostOf(it), it) })
+                    .distinctBy { it.third }
+                    .filter { query.isBlank() || it.first.lowercase().contains(query) || it.second.lowercase().contains(query) || it.third.lowercase().contains(query) }
+                    .take(5)
             if (candidates.isEmpty()) return
             suggestions.addView(label(if (query.isBlank()) "RECENT PAGES" else "SUGGESTIONS", 10f, Palette.MUTED, 1).apply {
                 letterSpacing = 0.12f
@@ -1669,7 +1671,7 @@ class MainActivity : AppCompatActivity() {
         val card = column().apply {
             setPadding(dp(18), dp(14), dp(18), dp(14))
             neu(this, 24, Depth.CARD, pressable = item.state == DlState.DONE)
-            if (item.state == DlState.DONE) setOnClickListener { openDownload(item) }
+            if (item.state == DlState.DONE) setOnClickListener { showDownloadActions(item) }
             setOnLongClickListener {
                 showDownloadActions(item)
                 true
@@ -2624,7 +2626,7 @@ class MainActivity : AppCompatActivity() {
         showSheet { sheet, dialog ->
             sheet.addView(label("Media on this page", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Direct files can be played or saved. Supported HLS/DASH streams may play when their source permits it; protected website video must stay in the original player.",
+                "Choose Download for eligible direct media. Protected or browser-managed streams must remain in the website player.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
             val list = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
@@ -2646,18 +2648,13 @@ class MainActivity : AppCompatActivity() {
                     setPadding(0, dp(4), 0, dp(10))
                 })
                 val actions = row()
-                actions.addView(textButton("Play", primary = true) {
-                    dialog.dismiss(); playMedia(Uri.parse(media.url), media.title, media.mimeType)
-                }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 if (media.downloadable) {
-                    actions.addView(textButton("Save") {
+                    actions.addView(textButton("Download", primary = true) {
                         dialog.dismiss()
                         startUrlDownload(media.url, tab.isPrivate)
-                    }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
-                    actions.addView(textButton("Private") {
-                        dialog.dismiss()
-                        startUrlDownload(media.url, tab.isPrivate, privateFolder = true)
-                    }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12) })
+                    }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                } else {
+                    actions.addView(label("Download unavailable for this source", 12f, Palette.MUTED))
                 }
                 card.addView(actions, matchWrap())
                 list.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
@@ -2753,6 +2750,14 @@ class MainActivity : AppCompatActivity() {
                 if (tab.media.isNotEmpty() || tab.unsupportedMedia > 0) {
                     val count = tab.media.size
                     item(Icons.PLAY, if (count > 0) "Media on this page ($count)" else "Media on this page") { showMediaSheet() }
+                }
+            }
+            item(Icons.SHARE, "Share page") {
+                if (currentUrl.isNotBlank()) {
+                    startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, currentUrl)
+                    }, "Share page"))
                 }
             }
             item(Icons.BOOKMARK, "Bookmarks") { show("bookmarks") }
@@ -2917,8 +2922,10 @@ class MainActivity : AppCompatActivity() {
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             attributes = attributes.apply {
-                dimAmount = 0.22f
+                dimAmount = 0.18f
                 this.y = y
+                // Align the popup's right edge with the actual three-dot anchor, not the screen edge.
+                this.x = (screenWidth - anchorPosition[0] - anchor.width).coerceAtLeast(dp(8))
             }
         }
         dialog.window?.setLayout(menuWidth, menuHeight)
