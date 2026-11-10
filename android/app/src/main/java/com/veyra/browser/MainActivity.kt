@@ -78,6 +78,8 @@ class MainActivity : AppCompatActivity() {
     private var forwardButton: View? = null
     private var progressFill: View? = null
     private var currentPage = "home"
+    private val screenBackStack = java.util.ArrayDeque<String>()
+    private var restoringScreen = false
     private val currentUrl: String get() = cur?.url ?: ""
     private val currentTitle: String get() = cur?.title ?: ""
     private val canGoBack: Boolean get() = cur?.canGoBack == true
@@ -312,7 +314,11 @@ class MainActivity : AppCompatActivity() {
             currentPage == "lock" -> super.onBackPressed()
             currentPage == "browse" && canGoBack -> cur?.session?.goBack()
             currentPage == "browse" -> show("home")
-            currentPage != "home" && !cur?.url.isNullOrBlank() -> show("browse")
+            screenBackStack.isNotEmpty() -> {
+                val destination = screenBackStack.removeLast()
+                restoringScreen = true
+                try { show(destination) } finally { restoringScreen = false }
+            }
             currentPage != "home" -> show("home")
             else -> super.onBackPressed()
         }
@@ -406,6 +412,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun show(page: String) {
+        if (page != currentPage && !restoringScreen) {
+            if (page == "home") screenBackStack.clear()
+            else screenBackStack.addLast(currentPage)
+        }
         when (page) {
             "home" -> showHome()
             "search" -> showSearch("")
