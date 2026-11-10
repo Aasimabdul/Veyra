@@ -1377,11 +1377,12 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString("history", array.toString()).apply()
     }
 
-    private fun playMedia(uri: Uri, name: String?) {
+    private fun playMedia(uri: Uri, name: String?, mimeType: String? = null) {
         startActivity(Intent(this, PlayerActivity::class.java).apply {
             data = uri
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             putExtra("name", name)
+            if (!mimeType.isNullOrBlank()) putExtra("mime_type", mimeType)
         })
     }
 
@@ -1733,7 +1734,7 @@ class MainActivity : AppCompatActivity() {
         }
         val kind = MediaDetect.kindFromExtension(item.name)
         if (DownloadNaming.isMediaMime(item.mime) || kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO) {
-            playMedia(Uri.parse(item.savedUri), item.name)
+            playMedia(Uri.parse(item.savedUri), item.name, item.mime)
             return
         }
         try {
@@ -2138,7 +2139,7 @@ class MainActivity : AppCompatActivity() {
         val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
         val kind = MediaDetect.kindFromExtension(file.name)
         if (kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO) {
-            playMedia(uri, file.name)
+            playMedia(uri, file.name, java.net.URLConnection.guessContentTypeFromName(file.name))
         } else try {
             startActivity(Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, java.net.URLConnection.guessContentTypeFromName(file.name) ?: "*/*")
@@ -2623,7 +2624,7 @@ class MainActivity : AppCompatActivity() {
         showSheet { sheet, dialog ->
             sheet.addView(label("Media on this page", 18f, Palette.TEXT, 1), matchWrap())
             sheet.addView(label(
-                "Direct files can be played or saved. Streams can only be played.",
+                "Direct files can be played or saved. Supported HLS/DASH streams may play when their source permits it; protected website video must stay in the original player.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
             val list = column().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
@@ -2646,7 +2647,7 @@ class MainActivity : AppCompatActivity() {
                 })
                 val actions = row()
                 actions.addView(textButton("Play", primary = true) {
-                    dialog.dismiss(); playMedia(Uri.parse(media.url), media.title)
+                    dialog.dismiss(); playMedia(Uri.parse(media.url), media.title, media.mimeType)
                 }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 if (media.downloadable) {
                     actions.addView(textButton("Save") {
@@ -2672,8 +2673,7 @@ class MainActivity : AppCompatActivity() {
             ))
             if (tab.unsupportedMedia > 0) {
                 sheet.addView(label(
-                    "${tab.unsupportedMedia} protected or segmented stream(s) on this page cannot be saved by Veyra " +
-                        "(for example blob, DRM or DASH video).",
+                    "${tab.unsupportedMedia} browser-managed media source(s) cannot be saved as ordinary files. Veyra will not extract DRM-protected streams; use the website player for these sources.",
                     12f, Palette.MUTED
                 ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(10), 0, 0) }, matchWrap())
             }
