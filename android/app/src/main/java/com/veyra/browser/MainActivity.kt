@@ -2114,6 +2114,7 @@ class MainActivity : AppCompatActivity() {
             when (status) {
                 VpnManager.Status.ON -> "Connected"
                 VpnManager.Status.CONNECTING -> "Connecting…"
+                VpnManager.Status.DISCONNECTING -> "Disconnecting…"
                 VpnManager.Status.ERROR -> "Connection failed"
                 VpnManager.Status.OFF -> if (vpn.hasConfig()) "Off" else "No config yet"
             },
@@ -2122,6 +2123,7 @@ class MainActivity : AppCompatActivity() {
         card.addView(label(
             when {
                 status == VpnManager.Status.ON -> "All apps on this device use the tunnel while it is on."
+                status == VpnManager.Status.DISCONNECTING -> "Disconnecting the tunnel and releasing its resources…"
                 status == VpnManager.Status.ERROR -> vpn.lastError ?: "Something went wrong."
                 vpn.hasConfig() -> "Tap Connect to start the tunnel."
                 else -> "Turn on the free VPN with one tap, or import your own WireGuard profile."
@@ -2150,10 +2152,13 @@ class MainActivity : AppCompatActivity() {
         page.addView(countryNote, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
 
         if (vpn.hasConfig()) {
-            val busy = status == VpnManager.Status.CONNECTING
+            val busy = status == VpnManager.Status.CONNECTING || status == VpnManager.Status.DISCONNECTING
             val on = status == VpnManager.Status.ON
             page.addView(
-                textButton(if (on) "Disconnect" else if (busy) "Connecting…" else "Connect", primary = !on) {
+                textButton(
+                    if (on) "Disconnect" else if (status == VpnManager.Status.DISCONNECTING) "Disconnecting…" else if (busy) "Connecting…" else "Connect",
+                    primary = !on
+                ) {
                     if (busy) return@textButton
                     if (on) vpn.disconnect() else startVpn()
                 },
