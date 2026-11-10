@@ -1668,14 +1668,10 @@ class MainActivity : AppCompatActivity() {
         val card = column().apply {
             setPadding(dp(18), dp(14), dp(18), dp(14))
             neu(this, 24, Depth.CARD, pressable = item.state == DlState.DONE)
-            if (item.state == DlState.DONE) setOnClickListener {
-                if (DownloadNaming.isMediaMime(item.mime) && item.savedUri != null) {
-                    playMedia(Uri.parse(item.savedUri), item.name)
-                    return@setOnClickListener
-                }
-                val intent = downloads.openIntent(item)
-                try { if (intent != null) startActivity(intent) else throw IllegalStateException() }
-                catch (_: Exception) { Toast.makeText(this@MainActivity, "No app can open this file", Toast.LENGTH_SHORT).show() }
+            if (item.state == DlState.DONE) setOnClickListener { openDownload(item) }
+            setOnLongClickListener {
+                showDownloadActions(item)
+                true
             }
         }
         val top = row()
@@ -1728,6 +1724,164 @@ class MainActivity : AppCompatActivity() {
             card.addView(track, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)).apply { topMargin = dp(14) })
         }
         return card
+    }
+
+    private fun openDownload(item: DownloadItem) {
+        if (item.state != DlState.DONE || item.savedUri == null) {
+            Toast.makeText(this, "This download is not ready yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val kind = MediaDetect.kindFromExtension(item.name)
+        if (DownloadNaming.isMediaMime(item.mime) || kind == DetectedMedia.Kind.VIDEO || kind == DetectedMedia.Kind.AUDIO) {
+            playMedia(Uri.parse(item.savedUri), item.name)
+            return
+        }
+        try {
+            val intent = downloads.openIntent(item) ?: throw IllegalStateException()
+            startActivity(intent)
+        } catch (_: Exception) {
+            Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showDownloadActions(item: DownloadItem) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label(item.name, 17f, Palette.TEXT, 1).apply {
+                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, matchWrap())
+            val subtitle = if (item.state == DlState.DONE) {
+                "${DownloadNaming.formatBytes(item.total)} · ${item.mime ?: "Unknown type"}"
+            } else when (item.state) {
+                DlState.RUNNING -> "Downloading · ${DownloadNaming.formatBytes(item.done)}"
+                DlState.PAUSED -> "Paused · ${DownloadNaming.formatBytes(item.done)}"
+                DlState.FAILED -> item.error ?: "Download failed"
+                DlState.DONE -> ""
+            }
+            sheet.addView(label(subtitle, 12f, Palette.MUTED).apply {
+                setPadding(0, dp(6), 0, dp(14))
+            }, matchWrap())
+            fun action(title: String, description: String, iconPaths: List<String> = Icons.FILE, onClick: () -> Unit) {
+                sheet.addView(
+                    listRow(well(icon(iconPaths, Palette.ACCENT, 18)), title, description) {
+                        dialog.dismiss()
+                        onClick()
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = dp(8)
+                    }
+                )
+            }
+            if (item.state == DlState.DONE) {
+                action("Open / Play", "Open the saved file") { openDownload(item) }
+                if (!item.inPrivateFolder) {
+                    action("Share", "Share using a temporary content URI") { shareDownload(item) }
+                    action("Rename", "Keep the filename safe and unique") { showRenameDownloadSheet(item) }
+                    if (!item.isPrivate) {
+                        action("Move to Private Folder", "Hide the file from public Downloads") {
+                            val moved = downloads.moveToPrivate(item)
+                            Toast.makeText(
+                                this,
+                                if (moved) "Moved to Private folder" else "Could not move this file; the original was kept",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            if (moved && currentPage == "downloads") refreshDownloads()
+                        }
+                    }
+                } else if (item.privateFolder && !item.isPrivate) {
+                    action("Move out of Private Folder", "Copy to Downloads before removing the private copy") {
+                        val moved = downloads.moveOutOfPrivate(item)
+                        Toast.makeText(this, if (moved) "Moved to Downloads" else "Could not safely move this file", Toast.LENGTH_LONG).show()
+                        if (moved && currentPage == "pfolder") showPrivateFolder()
+                    }
+                }
+                action("File details", "Filename, size, type and source host") { showDownloadDetails(item) }
+                action("Delete", "Remove the saved file", Icons.TRASH) {
+                    showConfirmSheet("Delete this download?", item.name, "Delete") {
+                        downloads.delete(item, deleteFile = true)
+                        if (currentPage == "downloads") refreshDownloads()
+                        else if (currentPage == "pfolder") showPrivateFolder()
+                    }
+                }
+            } else {
+                if (item.state == DlState.RUNNING) action("Pause", "Stop the transfer safely") { downloads.pause(item) }
+                if (item.state == DlState.PAUSED || item.state == DlState.FAILED) action("Retry / Resume", "Continue from saved progress when supported") { downloads.resume(item) }
+                action("Cancel", "Remove the incomplete download") {
+                    downloads.delete(item, deleteFile = false)
+                    if (currentPage == "downloads") refreshDownloads()
+                    else if (currentPage == "pfolder") showPrivateFolder()
+                }
+                action("File details", "Transfer status and source host") { showDownloadDetails(item) }
+            }
+        }
+    }
+
+    private fun shareDownload(item: DownloadItem) {
+        val uri = item.savedUri?.let(Uri::parse) ?: run {
+            Toast.makeText(this, "The saved file is unavailable", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val share = Intent(Intent.ACTION_SEND).apply {
+                type = item.mime ?: "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = android.content.ClipData.newRawUri(item.name, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(share, "Share file"))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Could not share this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showRenameDownloadSheet(item: DownloadItem) {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Rename download", 18f, Palette.TEXT, 1), matchWrap())
+            val input = EditText(this).apply {
+                hint = "Filename"
+                setText(item.name)
+                setHintTextColor(Palette.MUTED)
+                setTextColor(Palette.TEXT)
+                textSize = 15f
+                setSingleLine(true)
+                inputType = InputType.TYPE_CLASS_TEXT
+                setPadding(dp(18), 0, dp(18), 0)
+                neu(this, 24, Depth.FIELD, inset = true)
+            }
+            sheet.addView(input, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
+                topMargin = dp(16); bottomMargin = dp(18)
+            })
+            val actions = row().apply { gravity = Gravity.END }
+            actions.addView(textButton("Cancel") { dialog.dismiss() })
+            actions.addView(textButton("Save", primary = true) {
+                val ok = downloads.rename(item, input.text.toString().trim())
+                if (!ok) {
+                    Toast.makeText(this, "Could not rename the saved file", Toast.LENGTH_LONG).show()
+                } else {
+                    dialog.dismiss()
+                    if (currentPage == "downloads") refreshDownloads()
+                    else if (currentPage == "pfolder") showPrivateFolder()
+                }
+            }, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+            sheet.addView(actions, matchWrap())
+        }
+    }
+
+    private fun showDownloadDetails(item: DownloadItem) {
+        showSheet { sheet ->
+            sheet.addView(label("File details", 18f, Palette.TEXT, 1), matchWrap())
+            val rows = listOf(
+                "Name" to item.name,
+                "Size" to DownloadNaming.formatBytes(item.total),
+                "Type" to (item.mime ?: "Unknown"),
+                "Status" to item.state.name.lowercase().replaceFirstChar { it.uppercase() },
+                "Location" to if (item.inPrivateFolder) "Veyra Private folder (app storage)" else "Downloads/Veyra",
+                "Source host" to hostOf(item.url)
+            )
+            rows.forEach { (name, value) ->
+                sheet.addView(label(name, 11f, Palette.MUTED).apply { setPadding(0, dp(10), 0, dp(2)) }, matchWrap())
+                sheet.addView(label(value, 14f, Palette.TEXT).apply { maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END }, matchWrap())
+            }
+        }
     }
 
     /** Small preview of the wallpaper a theme puts on the home screen. */
