@@ -404,6 +404,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
     private fun run(item: DownloadItem, body: InputStream, offset: Long) {
         try {
             body.use { copy(item, it, offset, append = offset > 0) }
+            verifyTransferLength(item)
             finish(item)
         } catch (e: Exception) {
             if (item.cancelRequested) pausedOrDeleted(item) else fail(item, e.message ?: "Download failed")
@@ -443,11 +444,20 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             val len = connection.contentLengthLong
             item.total = if (len >= 0) len + start else item.total
             connection.inputStream.use { copy(item, it, start, append = start > 0) }
+            verifyTransferLength(item)
             finish(item)
         } catch (e: Exception) {
             if (item.cancelRequested) pausedOrDeleted(item) else fail(item, e.message ?: "Download failed")
         } finally {
             connection?.disconnect()
+        }
+    }
+
+    private fun verifyTransferLength(item: DownloadItem) {
+        if (item.total >= 0 && item.done != item.total) {
+            throw java.io.IOException(
+                "The server ended the transfer early (${item.done} of ${item.total} bytes received). Retry the download."
+            )
         }
     }
 
