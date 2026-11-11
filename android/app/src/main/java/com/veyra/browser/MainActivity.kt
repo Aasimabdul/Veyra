@@ -260,6 +260,7 @@ class MainActivity : AppCompatActivity() {
                 bar.visibility = if (websiteFullscreen || (keyboardVisible && currentPage == "browse")) View.GONE else View.VISIBLE
                 bar.alpha = 1f
                 bar.translationY = 0f
+                bar.post { updateGeckoReserve() }
             }
             insets
         }
@@ -844,12 +845,14 @@ class MainActivity : AppCompatActivity() {
             browserActionRow?.visibility = fullscreenPreviousActionVisibility
             applyGutters()
         }
+        bottomBar?.post { updateGeckoReserve() }
     }
 
     private fun setDockCollapsed(collapsed: Boolean) {
         if (dockHidden == collapsed) return
         dockHidden = collapsed
         browserActionRow?.visibility = if (collapsed) View.GONE else View.VISIBLE
+        bottomBar?.post { updateGeckoReserve() }
     }
 
     private var lastScrollY = 0
@@ -878,12 +881,26 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM
             ))
             positionFloatingDock()
+            // Never cover the page's own bottom controls (YouTube tabs, forms): the viewport ends above the dock.
+            bar.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGeckoReserve() }
         } else {
             root.addView(bar, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
                 topMargin = dp(8)
                 bottomMargin = dp(10)
             })
+        }
+    }
+
+    private fun updateGeckoReserve() {
+        if (!::geckoView.isInitialized) return
+        val gl = geckoView.layoutParams as? LinearLayout.LayoutParams ?: return
+        val bar = bottomBar
+        val want = if (dockFloating && bar != null && bar.visibility == View.VISIBLE && !websiteFullscreen)
+            bar.height + dp(12) else 0
+        if (gl.bottomMargin != want) {
+            gl.bottomMargin = want
+            geckoView.layoutParams = gl
         }
     }
 
