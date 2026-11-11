@@ -173,11 +173,85 @@ class MainActivity : AppCompatActivity() {
     // It only yields to the keyboard so it never covers the search field.
     private fun revealBrowserChrome() {
         if (currentPage != "browse" || keyboardVisible) return
+        if (dockAutoHidden) return
         bottomBar?.let { bar ->
             bar.visibility = View.VISIBLE
             bar.alpha = 1f
             bar.translationY = 0f
         }
+        scheduleDockAutoHide()
+    }
+
+    // ---- floating dock auto-hide + handle ------------------------------------------------
+    private var dockAutoHidden = false
+    private var dockHandle: View? = null
+    private val dockHideRunnable = Runnable { hideDockAnimated() }
+
+    private fun scheduleDockAutoHide() {
+        refreshHandler.removeCallbacks(dockHideRunnable)
+        if (currentPage == "browse" && dockFloating && !dockAutoHidden && !keyboardVisible && !websiteFullscreen) {
+            refreshHandler.postDelayed(dockHideRunnable, 5000)
+        }
+    }
+
+    private fun hideDockAnimated() {
+        val bar = bottomBar ?: return
+        if (currentPage != "browse" || !dockFloating || dockAutoHidden || keyboardVisible) return
+        dockAutoHidden = true
+        bar.animate().cancel()
+        bar.animate().translationY(bar.height.toFloat() + dp(24)).alpha(0f).setDuration(220)
+            .withEndAction { if (dockAutoHidden) bar.visibility = View.GONE; updateGeckoReserve(); updateDockHandle() }
+            .start()
+    }
+
+    private fun showDockAnimated() {
+        val bar = bottomBar ?: return
+        if (!dockFloating) return
+        dockAutoHidden = false
+        bar.animate().cancel()
+        bar.visibility = View.VISIBLE
+        bar.alpha = 0f
+        bar.translationY = dp(60).toFloat()
+        bar.animate().translationY(0f).alpha(1f).setDuration(240).start()
+        updateGeckoReserve()
+        updateDockHandle()
+        scheduleDockAutoHide()
+    }
+
+    /** Small pill at the bottom edge that brings the dock back. */
+    private fun updateDockHandle() {
+        val show = currentPage == "browse" && dockFloating && dockAutoHidden && !keyboardVisible && !websiteFullscreen
+        if (show) {
+            if (dockHandle == null) {
+                val h = FrameLayout(this).apply {
+                    contentDescription = "Show browser controls"
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { showDockAnimated() }
+                    addView(View(context).apply {
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = dpf(3f)
+                            setColor(translucent(Palette.ACCENT, 200))
+                        }
+                    }, FrameLayout.LayoutParams(dp(44), dp(5), Gravity.CENTER))
+                }
+                dockHost.addView(h, FrameLayout.LayoutParams(dp(120), dp(24), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+                dockHandle = h
+            }
+            (dockHandle!!.layoutParams as FrameLayout.LayoutParams).apply {
+                bottomMargin = maxOf(systemInsetBottom, imeInsetBottom) + dp(2)
+            }.also { dockHandle!!.layoutParams = it }
+            dockHandle!!.visibility = View.VISIBLE
+            dockHandle!!.alpha = 0f
+            dockHandle!!.animate().alpha(1f).setDuration(200).start()
+        } else {
+            dockHandle?.visibility = View.GONE
+        }
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.action == android.view.MotionEvent.ACTION_DOWN && !dockAutoHidden) scheduleDockAutoHide()
+        return super.dispatchTouchEvent(ev)
     }
 
     private val prefs get() = getSharedPreferences("veyra_preferences", MODE_PRIVATE)
@@ -257,10 +331,9 @@ class MainActivity : AppCompatActivity() {
             applyGutters()
             bottomBar?.let { bar ->
                 bar.animate().cancel()
-                bar.visibility = if (websiteFullscreen || (keyboardVisible && currentPage == "browse")) View.GONE else View.VISIBLE
-                bar.alpha = 1f
-                bar.translationY = 0f
-                bar.post { updateGeckoReserve() }
+                bar.visibility = if (websiteFullscreen || dockAutoHidden || (keyboardVisible && currentPage == "browse")) View.GONE else View.VISIBLE
+                if (!dockAutoHidden) { bar.alpha = 1f; bar.translationY = 0f }
+                bar.post { updateGeckoReserve(); updateDockHandle() }
             }
             insets
         }
@@ -330,6 +403,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        refreshHandler.removeCallbacks(dockHideRunnable)
         VpnManager.get(this).listener = null
         tabs.forEach { it.session.close() }
         tabs.clear()
@@ -538,9 +612,12 @@ class MainActivity : AppCompatActivity() {
         contentArea.removeAllViews()
         // Scroll pages turn this on so rows never paint under the dock or system bars.
         contentArea.clipChildren = false
-        bottomBar?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        refreshHandler.removeCallbacks(dockHideRunnable)
+        bottomBar?.let { it.animate().cancel(); (it.parent as? ViewGroup)?.removeView(it) }
         bottomBar = null
         dockFloating = false
+        dockAutoHidden = false
+        dockHandle?.visibility = View.GONE
     }
 
     private fun hideKeyboard() {
@@ -845,7 +922,8 @@ class MainActivity : AppCompatActivity() {
             browserActionRow?.visibility = fullscreenPreviousActionVisibility
             applyGutters()
         }
-        bottomBar?.post { updateGeckoReserve() }
+        bottomBar?.post { updateGeckoReserve(); updateDockHandle() }
+        if (!enabled) scheduleDockAutoHide()
     }
 
     private fun setDockCollapsed(collapsed: Boolean) {
@@ -870,6 +948,9 @@ class MainActivity : AppCompatActivity() {
     private fun attachBottomBar(bar: View, matchWidth: Boolean = false) {
         bottomBar = bar
         dockHidden = false
+        dockAutoHidden = false
+        refreshHandler.removeCallbacks(dockHideRunnable)
+        dockHandle?.visibility = View.GONE
         bar.alpha = 1f
         bar.translationY = 0f
         // Main nav sits exactly on the page gutter (same edge as the cards); the browser dock is
@@ -883,6 +964,7 @@ class MainActivity : AppCompatActivity() {
             positionFloatingDock()
             // Never cover the page's own bottom controls (YouTube tabs, forms): the viewport ends above the dock.
             bar.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGeckoReserve() }
+            scheduleDockAutoHide()
         } else {
             root.addView(bar, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
@@ -896,8 +978,12 @@ class MainActivity : AppCompatActivity() {
         if (!::geckoView.isInitialized) return
         val gl = geckoView.layoutParams as? LinearLayout.LayoutParams ?: return
         val bar = bottomBar
-        val want = if (dockFloating && bar != null && bar.visibility == View.VISIBLE && !websiteFullscreen)
-            bar.height + dp(12) else 0
+        val want = when {
+            !dockFloating || bar == null || websiteFullscreen -> 0
+            dockAutoHidden -> dp(26)
+            bar.visibility == View.VISIBLE -> bar.height + dp(12)
+            else -> 0
+        }
         if (gl.bottomMargin != want) {
             gl.bottomMargin = want
             geckoView.layoutParams = gl
