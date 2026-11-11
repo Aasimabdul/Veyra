@@ -39,6 +39,8 @@ class DownloadItem(
     @Volatile var savedUri: String? = null
     @Volatile var cancelRequested = false
     @Volatile var resumable = true
+    /** Page that offered the link; sent as Referer. Kept in memory only, never persisted. */
+    @Volatile var referer: String? = null
     /** Saved in the app-private, lock-protected folder instead of the public Downloads folder. */
     @Volatile var privateFolder = false
     val inPrivateFolder: Boolean get() = isPrivate || privateFolder
@@ -103,7 +105,8 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         url: String,
         isPrivate: Boolean,
         privateFolder: Boolean = false,
-        suggestedFileName: String? = null
+        suggestedFileName: String? = null,
+        referer: String? = null
     ) {
         if (!DownloadNaming.isHttpUrl(url)) return
         val preferredName = suggestedFileName?.let { DownloadNaming.sanitize(it) }
@@ -111,6 +114,7 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         val item = DownloadItem(ids.incrementAndGet(), url,
             DownloadNaming.uniqueName(preferredName, takenNames()), null, isPrivate)
         item.privateFolder = privateFolder
+        item.referer = referer?.takeIf { DownloadNaming.isHttpUrl(it) }
         items.add(0, item)
         pool.execute { runFromUrl(item, 0L) }
         changedNow()
@@ -411,14 +415,17 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
         }
     }
 
-    private fun runFromUrl(item: DownloadItem, offset: Long) {
+    private fun runFromUrl(item: DownloadItem, offset: Long, attempt: Int = 0) {
         var connection: HttpURLConnection? = null
         try {
             connection = (URL(item.url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15000
                 readTimeout = 20000
                 instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "Veyra")
+                // Many media CDNs reject unknown agents; present as a normal mobile browser.
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Android 14; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0")
+                setRequestProperty("Accept", "*/*")
+                item.referer?.let { setRequestProperty("Referer", it) }
                 setRequestProperty("Accept-Encoding", "identity")
                 setRequestProperty("Connection", "keep-alive")
                 if (offset > 0) setRequestProperty("Range", "bytes=$offset-")
@@ -447,7 +454,15 @@ class DownloadCenter(private val context: Context, private val onChange: () -> U
             verifyTransferLength(item)
             finish(item)
         } catch (e: Exception) {
-            if (item.cancelRequested) pausedOrDeleted(item) else fail(item, e.message ?: "Download failed")
+            if (item.cancelRequested) {
+                pausedOrDeleted(item)
+            } else if (e is java.io.IOException && attempt < 2 && item.resumable && items.contains(item)) {
+                // Flaky network or early close: retry from the bytes already saved.
+                try { Thread.sleep(1500L * (attempt + 1)) } catch (_: InterruptedException) {}
+                val have = partFile(item).let { if (it.exists()) it.length() else 0L }
+                if (have == 0L) item.done = 0
+                runFromUrl(item, have, attempt + 1)
+            } else fail(item, e.message ?: "Download failed")
         } finally {
             connection?.disconnect()
         }

@@ -375,8 +375,14 @@ class MainActivity : AppCompatActivity() {
         // Reattach the active Gecko session after Activity resume/recreation.
         // This avoids leaving the browser surface blank when Android restores the Activity.
         if (::geckoView.isInitialized && currentPage == "browse" && cur != null) {
-            geckoView.setBackgroundColor(Palette.BG)
-            showBrowser()
+            val tab = cur!!
+            if (geckoView.session !== tab.session || geckoView.parent == null) {
+                geckoView.setBackgroundColor(Palette.BG)
+                showBrowser()
+            } else {
+                // Already attached: just make sure the surface is active (avoids a black flash).
+                tab.session.setActive(true)
+            }
         }
     }
 
@@ -980,9 +986,7 @@ class MainActivity : AppCompatActivity() {
         val bar = bottomBar
         val want = when {
             !dockFloating || bar == null || websiteFullscreen -> 0
-            dockAutoHidden -> dp(26)
-            bar.visibility == View.VISIBLE -> bar.height + dp(12)
-            else -> 0
+            else -> 0 // the page runs under the transparent floating dock; auto-hide uncovers the bottom
         }
         if (gl.bottomMargin != want) {
             gl.bottomMargin = want
@@ -1873,7 +1877,7 @@ class MainActivity : AppCompatActivity() {
         suggestedFileName: String? = null
     ) {
         requestDownloadNotifications()
-        downloads.enqueueUrl(url, isPrivate, privateFolder, suggestedFileName)
+        downloads.enqueueUrl(url, isPrivate, privateFolder, suggestedFileName, cur?.url)
         Toast.makeText(this, if (privateFolder || isPrivate) "Saving to the private folder" else "Download started", Toast.LENGTH_SHORT).show()
     }
 
@@ -3243,9 +3247,14 @@ class MainActivity : AppCompatActivity() {
                     neu(this, 16, Depth.BUTTON, pressable = true)
                     setOnClickListener { popup.dismiss(); action() }
                 }
-                rowView.addView(icon(paths, Palette.ACCENT, 18))
-                rowView.addView(label(text, 14f, Palette.TEXT, 1).apply { setPadding(dp(10), 0, 0, 0) })
-                sheet.addView(rowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { bottomMargin = dp(6) })
+                rowView.gravity = Gravity.CENTER_VERTICAL
+                // Fixed-width icon slot keeps every label on the same left edge.
+                rowView.addView(FrameLayout(this).apply { addView(icon(paths, Palette.ACCENT, 18), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) },
+                    lp(dp(28), dp(28)))
+                rowView.addView(label(text, 14f, Palette.TEXT, 1).apply {
+                    setPadding(dp(8), 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                sheet.addView(rowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { bottomMargin = dp(6) })
             }
             item(Icons.BOOKMARK, "Bookmark this page") {
                 val tab = cur
@@ -3275,14 +3284,6 @@ class MainActivity : AppCompatActivity() {
                 if (tab.media.isNotEmpty() || tab.unsupportedMedia > 0 || hostOf(tab.url).let { h -> streamingHosts.any { h == it || h.endsWith(".$it") } }) {
                     val count = tab.media.size
                     item(Icons.PLAY, if (count > 0) "Media on this page ($count)" else "Media on this page") { showMediaSheet() }
-                }
-            }
-            item(Icons.SHARE, "Share page") {
-                if (currentUrl.isNotBlank()) {
-                    startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, currentUrl)
-                    }, "Share page"))
                 }
             }
             item(Icons.BOOKMARK, "Bookmarks") { show("bookmarks") }
