@@ -674,9 +674,9 @@ class MainActivity : AppCompatActivity() {
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
                 intArrayOf(
-                    Color.argb(188, Color.red(accentSurface), Color.green(accentSurface), Color.blue(accentSurface)),
-                    Color.argb(176, Color.red(surface), Color.green(surface), Color.blue(surface)),
-                    Color.argb(184, Color.red(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f)),
+                    Color.argb(236, Color.red(accentSurface), Color.green(accentSurface), Color.blue(accentSurface)),
+                    Color.argb(232, Color.red(surface), Color.green(surface), Color.blue(surface)),
+                    Color.argb(234, Color.red(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f)),
                         Color.green(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f)),
                         Color.blue(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.10f)))
                 )
@@ -692,7 +692,7 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "Address. Tap to edit"
             background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dpf(22f)
-                setColor(translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.035f else 0.075f), 216))
+                setColor(translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, if (Palette.LIGHT_THEME) 0.035f else 0.075f), 245))
                 setStroke(dp(1), translucent(ThemeMath.mix(Palette.BG, Palette.ACCENT, 0.18f), 115))
             }
             setOnClickListener {
