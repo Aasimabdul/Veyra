@@ -2113,7 +2113,7 @@ class MainActivity : AppCompatActivity() {
                     showPrivateFolder()
                 }
             }
-            val fileRow = listRow(
+            page.addView(listRow(
                 well(icon(if (media) Icons.PLAY else Icons.FILE, Palette.ACCENT, 20)),
                 file.name, DownloadNaming.formatBytes(file.length()), delete
             ) {
