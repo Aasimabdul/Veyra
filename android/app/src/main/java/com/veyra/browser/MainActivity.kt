@@ -66,6 +66,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private lateinit var contentArea: LinearLayout
     private var bottomBar: View? = null
+    private lateinit var dockHost: FrameLayout
+    private var dockFloating = false
     private var browserActionRow: View? = null
     private var dockHidden = false
     private var keyboardVisible = false
@@ -237,7 +239,12 @@ class MainActivity : AppCompatActivity() {
         }
         contentArea = column()
         root.addView(contentArea, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        setContentView(root)
+        // The browser dock floats above the page in this host, so nothing solid sits behind it.
+        dockHost = FrameLayout(this).apply {
+            setBackgroundColor(Palette.BG)
+            addView(root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        setContentView(dockHost)
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
@@ -486,6 +493,7 @@ class MainActivity : AppCompatActivity() {
             systemInsetRight + contentGutter,
             if (websiteFullscreen) 0 else maxOf(systemInsetBottom, imeInsetBottom)
         )
+        positionFloatingDock()
     }
 
     private fun show(page: String) {
@@ -529,8 +537,9 @@ class MainActivity : AppCompatActivity() {
         contentArea.removeAllViews()
         // Scroll pages turn this on so rows never paint under the dock or system bars.
         contentArea.clipChildren = false
-        bottomBar?.let { root.removeView(it) }
+        bottomBar?.let { (it.parent as? ViewGroup)?.removeView(it) }
         bottomBar = null
+        dockFloating = false
     }
 
     private fun hideKeyboard() {
@@ -862,16 +871,31 @@ class MainActivity : AppCompatActivity() {
         bar.translationY = 0f
         // Main nav sits exactly on the page gutter (same edge as the cards); the browser dock is
         // full-bleed, so it keeps a small fixed margin. Both get the same vertical spacing.
-        root.addView(bar, lp(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            if (matchWidth) ViewGroup.LayoutParams.WRAP_CONTENT else dp(58)
-        ).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = dp(8)
-            bottomMargin = dp(10)
-            leftMargin = dp(if (matchWidth) 16 else 0)
-            rightMargin = dp(if (matchWidth) 16 else 0)
-        })
+        if (matchWidth) {
+            // Browser dock: overlay the page as one floating pill (no panel behind it).
+            dockFloating = true
+            dockHost.addView(bar, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM
+            ))
+            positionFloatingDock()
+        } else {
+            root.addView(bar, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(8)
+                bottomMargin = dp(10)
+            })
+        }
+    }
+
+    /** Keeps the floating dock above the gesture bar, beside cutouts and above the keyboard. */
+    private fun positionFloatingDock() {
+        val bar = bottomBar ?: return
+        if (!dockFloating) return
+        val lpBar = bar.layoutParams as? FrameLayout.LayoutParams ?: return
+        lpBar.leftMargin = systemInsetLeft + dp(12)
+        lpBar.rightMargin = systemInsetRight + dp(12)
+        lpBar.bottomMargin = maxOf(systemInsetBottom, imeInsetBottom) + dp(8)
+        bar.layoutParams = lpBar
     }
 
     // ---- screens ----------------------------------------------------------------------
