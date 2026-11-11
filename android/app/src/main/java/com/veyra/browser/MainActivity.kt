@@ -121,7 +121,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Lets the user choose: private tab straight away, or after verifying the screen lock. */
     private fun requestPrivateTab() {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Open private tab", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "Private tabs keep no history and are hidden from screenshots. You can require your screen lock first.",
+                13f, Palette.MUTED
+            ).apply { setPadding(0, dp(8), 0, dp(16)) }, matchWrap())
+            sheet.addView(textButton("With screen lock", primary = true) { dialog.dismiss(); requestPrivateTabWithLock() },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) })
+            sheet.addView(textButton("Without password") {
+                dialog.dismiss()
+                if (newTab(true) != null) showSearch("")
+            }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+    }
+
+    private fun requestPrivateTabWithLock() {
         val keyguard = getSystemService(KeyguardManager::class.java)
         val credentialIntent = keyguard?.createConfirmDeviceCredentialIntent(
             "Unlock private browsing", "Verify your screen lock to open a private tab"
@@ -986,7 +1003,8 @@ class MainActivity : AppCompatActivity() {
         val bar = bottomBar
         val want = when {
             !dockFloating || bar == null || websiteFullscreen -> 0
-            else -> 0 // the page runs under the transparent floating dock; auto-hide uncovers the bottom
+            dockAutoHidden -> dp(26) // slim strip so the handle never covers page controls
+            else -> 0 // the page runs under the transparent floating dock
         }
         if (gl.bottomMargin != want) {
             gl.bottomMargin = want
