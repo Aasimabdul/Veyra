@@ -30,7 +30,7 @@ class AddressResolverTest {
     @Test
     fun ordinaryTextIsEncodedAsSearch() {
         assertEquals(
-            "https://www.google.com/search?q=hello+world",
+            "https://duckduckgo.com/?q=hello+world",
             AddressResolver.resolve("hello world")
         )
     }
@@ -38,11 +38,11 @@ class AddressResolverTest {
     @Test
     fun unsupportedSchemesAreNeverReturnedAsNavigationTargets() {
         assertEquals(
-            "https://www.google.com/search?q=javascript%3Aalert%281%29",
+            "https://duckduckgo.com/?q=javascript%3Aalert%281%29",
             AddressResolver.resolve("javascript:alert(1)")
         )
         assertEquals(
-            "https://www.google.com/search?q=file%3A%2F%2F%2Fprivate.txt",
+            "https://duckduckgo.com/?q=file%3A%2F%2F%2Fprivate.txt",
             AddressResolver.resolve("file:///private.txt")
         )
     }
@@ -50,7 +50,7 @@ class AddressResolverTest {
     @Test
     fun malformedHttpUrlFallsBackToSearch() {
         assertEquals(
-            "https://www.google.com/search?q=https%3A%2F%2F",
+            "https://duckduckgo.com/?q=https%3A%2F%2F",
             AddressResolver.resolve("https://")
         )
     }
@@ -58,7 +58,7 @@ class AddressResolverTest {
     @Test
     fun urlsContainingEmbeddedCredentialsBecomeSearchText() {
         assertEquals(
-            "https://www.google.com/search?q=https%3A%2F%2Fuser%3Asecret%40example.com",
+            "https://duckduckgo.com/?q=https%3A%2F%2Fuser%3Asecret%40example.com",
             AddressResolver.resolve("https://user:secret@example.com")
         )
     }
@@ -66,11 +66,11 @@ class AddressResolverTest {
     @Test
     fun outOfRangePortsBecomeSearchText() {
         assertEquals(
-            "https://www.google.com/search?q=https%3A%2F%2Fexample.com%3A65536",
+            "https://duckduckgo.com/?q=https%3A%2F%2Fexample.com%3A65536",
             AddressResolver.resolve("https://example.com:65536")
         )
         assertEquals(
-            "https://www.google.com/search?q=localhost%3A65536",
+            "https://duckduckgo.com/?q=localhost%3A65536",
             AddressResolver.resolve("localhost:65536")
         )
     }
@@ -78,8 +78,17 @@ class AddressResolverTest {
     @Test
     fun zeroPortIsRejectedAsNavigationTarget() {
         assertEquals(
-            "https://www.google.com/search?q=https%3A%2F%2Fexample.com%3A0",
+            "https://duckduckgo.com/?q=https%3A%2F%2Fexample.com%3A0",
             AddressResolver.resolve("https://example.com:0")
+        )
+    }
+
+    @Test
+    fun customSearchEngineCanBeSpecified() {
+        val brave = SearchEngine.byKey("brave")
+        assertEquals(
+            "https://search.brave.com/search?q=open+source",
+            AddressResolver.resolve("open source", brave)
         )
     }
 }

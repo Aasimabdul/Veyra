@@ -84,6 +84,8 @@ class MainActivity : AppCompatActivity() {
     private var backButton: View? = null
     private var forwardButton: View? = null
     private var progressFill: View? = null
+    private var activeDialog: Dialog? = null
+    private var activePopup: PopupWindow? = null
     private var currentPage = "home"
     private var websiteFullscreen = false
     private var fullscreenPreviousBottomVisibility = View.VISIBLE
@@ -400,9 +402,17 @@ class MainActivity : AppCompatActivity() {
                 geckoView.setBackgroundColor(Palette.BG)
                 showBrowser()
             } else {
-                // Already attached: just make sure the surface is active (avoids a black flash).
-                tab.session.setActive(true)
+                // Already attached: ensure active tab renders and background tabs stay suspended.
+                tabs.forEach { it.session.setActive(it === tab) }
             }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Suspend background rendering while activity is paused to save battery and RAM.
+        if (::geckoView.isInitialized) {
+            tabs.forEach { it.session.setActive(false) }
         }
     }
 
@@ -430,6 +440,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         refreshHandler.removeCallbacks(dockHideRunnable)
+        activePopup?.dismiss()
+        activePopup = null
+        activeDialog?.dismiss()
+        activeDialog = null
         VpnManager.get(this).listener = null
         tabs.forEach { it.session.close() }
         tabs.clear()
@@ -440,6 +454,14 @@ class MainActivity : AppCompatActivity() {
     private val backCallback = object : androidx.activity.OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             when {
+                activePopup?.isShowing == true -> {
+                    activePopup?.dismiss()
+                    activePopup = null
+                }
+                activeDialog?.isShowing == true -> {
+                    activeDialog?.dismiss()
+                    activeDialog = null
+                }
                 currentPage == "lock" -> passBackToSystem()
                 websiteFullscreen -> cur?.session?.exitFullScreen()
                 currentPage == "browse" && canGoBack -> cur?.session?.goBack()
@@ -2333,6 +2355,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun openWithExternalApp(uri: Uri, mime: String?) {
+        try {
+            val view = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime?.takeIf { it.isNotBlank() } ?: "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(view, "Open with"))
+        } catch (_: Exception) {
+            Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     /** One row inside the long-press action sheets. */
     private fun sheetAction(paths: List<String>, text: String, danger: Boolean = false, onClick: () -> Unit): View =
         row().apply {
@@ -2383,6 +2417,10 @@ class MainActivity : AppCompatActivity() {
                 dialog.dismiss(); playMedia(uri, item.name, item.mime)
             }, matchWrap())
             if (uri != null) sheet.addView(sheetAction(Icons.SHARE, "Share") { dialog.dismiss(); shareUri(uri, item.mime) }, matchWrap())
+            if (uri != null) sheet.addView(sheetAction(Icons.FILE, "Open with another app") {
+                dialog.dismiss()
+                openWithExternalApp(uri, item.mime)
+            }, matchWrap())
             sheet.addView(sheetAction(Icons.EDIT, "Rename") {
                 dialog.dismiss()
                 showRenameSheet(item.name, { downloads.rename(item, it) }) { }
@@ -3244,11 +3282,23 @@ class MainActivity : AppCompatActivity() {
                 ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(10), 0, 0) }, matchWrap())
             }
             if (candidates.isNotEmpty()) {
-                sheet.addView(textButton("Download", primary = true) {
+                val actionRow = row().apply { gravity = Gravity.CENTER_VERTICAL }
+                actionRow.addView(textButton("Stream", primary = true) {
+                    val media = selected ?: return@textButton
+                    dialog.dismiss()
+                    playMedia(Uri.parse(media.url), media.title.ifBlank { media.fileName }, media.mimeType)
+                }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                actionRow.addView(textButton("Download") {
                     val media = selected ?: return@textButton
                     dialog.dismiss()
                     startUrlDownload(media.url, tab.isPrivate, suggestedFileName = media.fileName)
-                }, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+                }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
+                actionRow.addView(textButton("Private") {
+                    val media = selected ?: return@textButton
+                    dialog.dismiss()
+                    startUrlDownload(media.url, tab.isPrivate, privateFolder = true, suggestedFileName = media.fileName)
+                }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
+                sheet.addView(actionRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
             }
         }
     }
@@ -3509,7 +3559,9 @@ class MainActivity : AppCompatActivity() {
             elevation = dpf(14f)
             inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            setOnDismissListener { if (activePopup === this) activePopup = null }
         }
+        activePopup = popup
         build(sheet, popup)
         // Re-measure after the rows are inserted so the anchor position matches the actual menu.
         scroller.measure(
@@ -3554,6 +3606,8 @@ class MainActivity : AppCompatActivity() {
             setGravity(Gravity.BOTTOM)
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         }
+        dialog.setOnDismissListener { if (activeDialog === dialog) activeDialog = null }
+        activeDialog = dialog
         dialog.setCanceledOnTouchOutside(true)
         dialog.show()
     }

@@ -5,7 +5,9 @@ Status words follow the release rules: only features that were built **and** che
 | Feature | Status | Evidence / limits |
 |---|---|---|
 | Neumorphic UI, all screens (lock, home, search, browser, tabs, bookmarks, history, downloads, settings, appearance, privacy, Private Space) | IMPLEMENTED AND TESTED | Emulator screenshots in CI (`ci-screenshots` branch). Phone-size layouts only; tablet gutters not visually verified. |
-| 12 themes + System | IMPLEMENTED AND TESTED | `ThemesTest` checks contrast (text 7:1, muted 4.5:1, accent 3:1) and shadow direction; 3 themes screenshotted. |
+| 15 themes + System | IMPLEMENTED AND TESTED | `ThemesTest` checks contrast (text 7:1, muted 4.5:1, accent 3:1) and shadow direction; themes screenshotted in CI. |
+| Privacy-first search engine (DuckDuckGo, Brave, Startpage, Ecosia, Wikipedia) | IMPLEMENTED AND TESTED (unit tests) | Defaults to DuckDuckGo; Google intentionally removed as default. `AddressResolverTest` verifies search query encoding. |
+| Security Policy & Network Security Config | IMPLEMENTED BUT NOT TESTED ON A DEVICE | Local root detection, ADB warning, screen lock presence check, cleartext HTTP blocked via `network_security_config.xml`. |
 | Multiple tabs (max 8) | IMPLEMENTED BUT NOT FULLY TESTED | One GeckoSession per tab; tab switching not exercised by automated tests. |
 | Private tabs | IMPLEMENTED BUT NOT FULLY TESTED | Gecko private-mode sessions, never added to history, `FLAG_SECURE` in release builds. Cookie/storage isolation not independently verified. |
 | Tracker protection (Standard / Strict), cookie modes, JavaScript switch | IMPLEMENTED BUT NOT FULLY TESTED | Uses Gecko settings; blocked counter counts Gecko block events only. No controlled tracker test page yet. |
