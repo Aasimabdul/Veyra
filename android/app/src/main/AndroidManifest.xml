@@ -2,14 +2,6 @@
           xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Required by WireGuard's GoBackend to run the VPN tunnel service -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Required on Android 14+ for the VPN foreground service type -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- BIND_VPN_SERVICE is a system-level permission; declared here so the WireGuard backend
-         can bind to the VPN service. The OS enforces it; this declaration is advisory. -->
-    <uses-permission android:name="android.permission.BIND_VPN_SERVICE"
-        tools:ignore="ProtectedPermissions" />
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

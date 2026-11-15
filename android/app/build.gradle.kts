@@ -36,13 +36,9 @@ android {
         }
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
-            // R8 (ProGuard-compatible) minification + obfuscation for security.
-            // The rules in proguard-rules.pro strip log calls and obfuscate class names.
-            isMinifyEnabled = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            // R8 minification is off: GeckoView/WireGuard rely on JNI reflection and it was not verified
+            // on a physical phone. Re-enable only after testing on an ARM64 device.
+            isMinifyEnabled = false
         }
     }
 
