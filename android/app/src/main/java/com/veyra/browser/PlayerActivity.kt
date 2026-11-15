@@ -88,6 +88,8 @@ class PlayerActivity : AppCompatActivity() {
     private var userRotated = false
     private var autoRotated = false
     private var holdingSpeed = false
+    private var videoWidth = 0
+    private var videoHeight = 0
 
     private val hideControls = Runnable { setControlsVisible(false) }
     private val hideHud = Runnable { hud.visibility = View.GONE }
@@ -175,7 +177,7 @@ class PlayerActivity : AppCompatActivity() {
                 errorCard.visibility = View.GONE
                 startPlayback(resumeAt)
             }, LinearLayout.LayoutParams(-2, dp(42)).apply { topMargin = dp(16) })
-            addView(pillButton("Open with another app", "Open with another app") { openElsewhere() },
+            addView(pillButton("Open with another app", "Open with another app") { showOpenWithSheet() },
                 LinearLayout.LayoutParams(-2, dp(42)).apply { topMargin = dp(10) })
         }
         root.addView(errorCard, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply {
@@ -211,6 +213,8 @@ class PlayerActivity : AppCompatActivity() {
         top.addView(pillButton("Audio", "Choose audio track") { pickTracks(C.TRACK_TYPE_AUDIO, "Audio tracks") },
             LinearLayout.LayoutParams(-2, dp(36)).apply { rightMargin = dp(8) })
         top.addView(pillButton("CC", "Subtitles") { pickTracks(C.TRACK_TYPE_TEXT, "Subtitles") },
+            LinearLayout.LayoutParams(-2, dp(36)).apply { rightMargin = dp(8) })
+        top.addView(pillButton("⋮", "Open in external app") { showOpenWithSheet() },
             LinearLayout.LayoutParams(-2, dp(36)))
         layer.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
@@ -550,6 +554,8 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0) videoWidth = videoSize.width
+                if (videoSize.height > 0) videoHeight = videoSize.height
                 // Landscape videos start in landscape once, unless the user already rotated manually.
                 if (!autoRotated && !userRotated && videoSize.width > videoSize.height) {
                     autoRotated = true
@@ -589,23 +595,7 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun playbackErrorMessage(error: PlaybackException): String {
-        val code = error.errorCodeName.uppercase(java.util.Locale.ROOT)
-        return when {
-            "DECODING_FORMAT_UNSUPPORTED" in code ->
-                "This device does not support the video's audio or video codec."
-            "DECODING" in code ->
-                "The media decoder failed. The file may be damaged or use a codec this device cannot decode."
-            "IO_BAD_HTTP_STATUS" in code ->
-                "The media server returned an HTTP error. The link may have expired or access may be denied."
-            "IO_NETWORK" in code || "IO_" in code ->
-                "Veyra could not read the media source. Check the connection or try another link."
-            "PARSING" in code ->
-                "The media container or playlist is invalid or unsupported."
-            else ->
-                "Veyra could not play this source. It may be unavailable, incomplete, or require its original website player."
-        }
-    }
+    // Note: the single-argument overload was removed; playbackErrorMessage(error, decoderProblem) covers all cases.
 
     private fun showError(message: String) {
         errorText.text = message
@@ -616,8 +606,9 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun openElsewhere() {
         val uri = source ?: return
+        val mimeType = contentResolver.getType(uri) ?: "video/*"
         val view = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, contentResolver.getType(uri) ?: "video/*")
+            setDataAndType(uri, mimeType)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         try {
@@ -628,6 +619,67 @@ class PlayerActivity : AppCompatActivity() {
         } catch (_: Exception) {
             Toast.makeText(this, "No other app can open this file", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** Try to open the current source in VLC, MX Player, or fall back to the system chooser. */
+    private fun openInSpecificApp(packageName: String, label: String) {
+        val uri = source ?: return
+        val mimeType = contentResolver.getType(uri) ?: "video/*"
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            setPackage(packageName)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            Toast.makeText(this, "$label is not installed", Toast.LENGTH_SHORT).show()
+            // Fall back to the general chooser so the user can still open it elsewhere.
+            openElsewhere()
+        }
+    }
+
+    /** Shows a bottom-sheet-style popup with VLC, MX Player and a general "Open with" option. */
+    private fun showOpenWithSheet() {
+        val uri = source ?: return
+        val mimeType = contentResolver.getType(uri) ?: "video/*"
+        val packageManager = packageManager
+
+        // Build a list of well-known players that are actually installed.
+        data class AppEntry(val label: String, val pkg: String)
+        val known = listOf(
+            AppEntry("VLC", "org.videolan.vlc"),
+            AppEntry("MX Player", "com.mxtech.videoplayer.ad"),
+            AppEntry("MX Player Pro", "com.mxtech.videoplayer.pro")
+        )
+        val installed = known.filter {
+            try { packageManager.getPackageInfo(it.pkg, 0); true } catch (_: Exception) { false }
+        }
+
+        val baseIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        // Alert-style chooser overlay.
+        val dialog = android.app.AlertDialog.Builder(this)
+        val items = (installed.map { it.label } + listOf("Other app…")).toTypedArray()
+        dialog.setTitle("Open in…")
+        dialog.setItems(items) { _, which ->
+            if (which < installed.size) {
+                openInSpecificApp(installed[which].pkg, installed[which].label)
+            } else {
+                try {
+                    val chooser = Intent.createChooser(baseIntent, "Open with").apply {
+                        putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS,
+                            arrayOf(ComponentName(this@PlayerActivity, PlayerActivity::class.java)))
+                    }
+                    startActivity(chooser)
+                } catch (_: Exception) {
+                    Toast.makeText(this, "No other app can open this file", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun hideSystemBars() {
@@ -645,9 +697,18 @@ class PlayerActivity : AppCompatActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (Build.VERSION.SDK_INT >= 26 && player?.isPlaying == true) {
-            enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
+            // Use the actual video aspect ratio so PiP window is not letter-boxed incorrectly.
+            val w = if (videoWidth > 0) videoWidth else 16
+            val h = if (videoHeight > 0) videoHeight else 9
+            val gcd = gcd(w, h)
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(w / gcd, h / gcd))
+                .build()
+            enterPictureInPictureMode(params)
         }
     }
+
+    private fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)

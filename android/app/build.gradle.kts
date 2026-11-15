@@ -31,10 +31,24 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            isMinifyEnabled = false
+            applicationIdSuffix = ".debug"
+        }
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
+            // R8 (ProGuard-compatible) minification + obfuscation for security.
+            // The rules in proguard-rules.pro strip log calls and obfuscate class names.
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     // GeckoView ships a large native engine (libxul.so) per CPU architecture. Build one APK

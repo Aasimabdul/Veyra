@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Veyra Network Security Configuration
+  =====================================
+  Enforces HTTPS-only for all Veyra's own network traffic (Cloudflare WARP
+  registration, media downloads, etc.). Cleartext HTTP is blocked globally.
+
+  The embedded GeckoView browser engine manages its own network stack and is
+  NOT bound by this config — it enforces HSTS and HTTPS policies from within
+  the engine itself. This config protects Veyra's native Java/Kotlin code only.
+
+  Reference: https://developer.android.com/training/articles/security-config
+-->
+<network-security-config>
+
+    <!-- Global policy: forbid all cleartext (HTTP) traffic from Veyra's own code. -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- Trust only the system CA store (no user-installed CAs, no debug CAs). -->
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!--
+      Cloudflare WARP registration endpoint (used by WarpProvisioner).
+      Pinning is intentionally NOT applied here: Cloudflare rotates certificates
+      frequently and a broken pin would permanently lock users out of the free VPN.
+      HTTPS enforcement + system CA is the correct protection level for a public API.
+    -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">cloudflareclient.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!--
+      Debug builds only: allow the developer to inspect traffic with a local proxy
+      (e.g. mitmproxy). User-installed CAs are permitted ONLY in debug builds.
+      This block is stripped from release APKs by the build system.
+    -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+
+</network-security-config>

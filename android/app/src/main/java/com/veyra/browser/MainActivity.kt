@@ -62,6 +62,8 @@ class MainActivity : AppCompatActivity() {
     private var websiteColorScheme = "light"
     private var javascriptEnabled = true
     private var blockPopups = true
+    // Privacy-first search engine: defaults to DuckDuckGo. Never Google.
+    private var searchEngineKey = SearchEngine.default.key
     private lateinit var geckoView: GeckoView
     private lateinit var root: LinearLayout
     private lateinit var contentArea: LinearLayout
@@ -283,6 +285,7 @@ class MainActivity : AppCompatActivity() {
         javascriptEnabled = prefs.getBoolean("javascript_enabled", true)
         blockPopups = prefs.getBoolean("block_popups", true)
         websiteColorScheme = prefs.getString("website_color_scheme", "light") ?: "light"
+        searchEngineKey = prefs.getString("search_engine", SearchEngine.default.key) ?: SearchEngine.default.key
         applyTheme()
 
         val contentBlockingSettings = ContentBlocking.Settings.Builder()
@@ -843,7 +846,8 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 when (vpnManager.status) {
                     VpnManager.Status.ON -> vpnManager.disconnect()
-                    VpnManager.Status.CONNECTING -> Toast.makeText(this@MainActivity, "VPN is connecting…", Toast.LENGTH_SHORT).show()
+                    VpnManager.Status.CONNECTING,
+                    VpnManager.Status.DISCONNECTING -> Toast.makeText(this@MainActivity, "VPN is busy, please wait…", Toast.LENGTH_SHORT).show()
                     else -> if (vpnManager.hasConfig()) startVpn() else setupFreeVpnAndConnect()
                 }
                 postDelayed({
@@ -1090,9 +1094,9 @@ class MainActivity : AppCompatActivity() {
         }, matchWrap())
         val shortcuts = mutableListOf(
             Triple("Y", "YouTube", "https://m.youtube.com"),
-            Triple("G", "Google", "https://google.com"),
+            Triple("D", "DuckDuckGo", "https://duckduckgo.com"),
             Triple("G", "GitHub", "https://github.com"),
-            Triple("R", "Reddit", "https://reddit.com"),
+            Triple("W", "Wikipedia", "https://en.wikipedia.org"),
             Triple("X", "X", "https://x.com")
         )
         shortcuts.addAll(loadQuickShortcuts().map { Triple(it[1].take(1), it[1], it[2]) })
@@ -1219,8 +1223,8 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(4), 0, 0, dp(14))
         }, matchWrap())
         listOf(
-            Triple("Google", "google.com", "https://google.com"),
             Triple("DuckDuckGo", "duckduckgo.com", "https://duckduckgo.com"),
+            Triple("Brave Search", "search.brave.com", "https://search.brave.com"),
             Triple("Wikipedia", "wikipedia.org", "https://wikipedia.org")
         ).forEach { (name, host, url) ->
             page.addView(
@@ -1311,7 +1315,7 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        val uri = AddressResolver.resolve(trimmed) ?: run {
+        val uri = AddressResolver.resolve(trimmed, SearchEngine.byKey(searchEngineKey)) ?: run {
             Toast.makeText(this, "Enter a valid address or search term", Toast.LENGTH_SHORT).show()
             return
         }
@@ -1410,6 +1414,38 @@ class MainActivity : AppCompatActivity() {
                 if (!tab.isPrivate) {
                     history.lastOrNull { it.url == tab.url }?.title = title
                     persistHistory()
+                }
+            }
+
+            /** Called when the content process for this session dies (crash or OOM kill).
+             *  Reopen the session automatically so the tab is not left blank forever. */
+            override fun onCrash(session: GeckoSession) {
+                runOnUiThread {
+                    // The session is now closed; reopen it so it can be used again.
+                    if (!session.isOpen) session.open(runtime)
+                    if (tab === cur && currentPage == "browse") {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "The page crashed. Reloading…",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        if (tab.url.isNotBlank()) session.loadUri(tab.url)
+                    }
+                }
+            }
+
+            /** Called when the content process is killed by the OS (e.g. low memory). */
+            override fun onKill(session: GeckoSession) {
+                runOnUiThread {
+                    if (!session.isOpen) session.open(runtime)
+                    if (tab === cur && currentPage == "browse") {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "The page was stopped by Android to free memory. Reloading…",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        if (tab.url.isNotBlank()) session.loadUri(tab.url)
+                    }
                 }
             }
         }
@@ -2199,6 +2235,7 @@ class MainActivity : AppCompatActivity() {
             appLockEnabled && secure
         ) { enabled -> setAppLock(enabled) }
         actionRow(Icons.SHIELD, "Privacy", "Blocked trackers, cookies, JavaScript") { show("privacy") }
+        actionRow(Icons.SEARCH, "Search engine", SearchEngine.byKey(searchEngineKey).name) { showSearchEnginePicker() }
         actionRow(Icons.SETTINGS, "Appearance", "Theme: ${if (themeKey == Themes.SYSTEM) "System" else Themes.byKey(themeKey).name}") { show("appearance") }
         actionRow(Icons.SETTINGS, "Website appearance", "Light, dark or Android system page colors") { showWebsiteAppearance() }
         actionRow(Icons.LOCK, "Private Space", "Encrypted notes and files") { show("private") }
@@ -2206,6 +2243,7 @@ class MainActivity : AppCompatActivity() {
         actionRow(Icons.CLOCK, "History", "Pages visited in normal tabs") { show("history") }
         actionRow(Icons.TRASH, "Clear browsing data", "Cookies, cache, site data and history") { confirmClearData() }
         actionRow(Icons.INFO, "About Veyra", "Version, engine and licence") { showAbout() }
+        actionRow(Icons.SHIELD, "Security audit", "Check device security posture") { showSecurityAudit() }
         addMainNav("settings")
     }
 
@@ -2903,7 +2941,13 @@ class MainActivity : AppCompatActivity() {
         resetContent("vpn")
         val vpn = VpnManager.get(this)
         vpn.refresh()
-        vpn.listener = { if (currentPage == "vpn") showVpn() }
+        // Use a stable listener that only refreshes the VPN screen when the status
+        // actually changes, without replacing the global toolbar listener set in onCreate.
+        vpn.listener = {
+            val v = VpnManager.get(this)
+            vpnStatusLabel?.text = if (v.status == VpnManager.Status.ON) "VPN ON" else "VPN"
+            if (currentPage == "vpn") showVpn()
+        }
         val page = scrollPage()
         val header = row().apply { minimumHeight = dp(48) }
         header.addView(iconButton(Icons.BACK, "Back") { show("settings") })
@@ -3563,6 +3607,78 @@ class MainActivity : AppCompatActivity() {
         val saved = JSONArray()
         bookmarks.forEach { saved.put(it) }
         prefs.edit().putString("bookmarks", saved.toString()).apply()
+    }
+
+    // ---- Search Engine Picker ----------------------------------------------------------
+
+    private fun showSearchEnginePicker() {
+        showSheet { sheet, dialog ->
+            sheet.addView(label("Search engine", 18f, Palette.TEXT, 1), matchWrap())
+            sheet.addView(label(
+                "All listed engines protect your privacy. DuckDuckGo is the default: no tracking, " +
+                    "no advertising profile. Google is not listed here as a default because it " +
+                    "tracks search queries across sessions.",
+                13f, Palette.MUTED
+            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(16)) }, matchWrap())
+
+            SearchEngine.all.forEach { engine ->
+                val selected = engine.key == searchEngineKey
+                sheet.addView(
+                    listRow(
+                        well(icon(if (selected) Icons.SHIELD else Icons.SEARCH,
+                            if (selected) Palette.ACCENT else Palette.MUTED, 20)),
+                        engine.name,
+                        engine.privacyNote,
+                        icon(if (selected) Icons.SHIELD else Icons.CHEVRON, Palette.ACCENT, 18)
+                    ) {
+                        searchEngineKey = engine.key
+                        prefs.edit().putString("search_engine", engine.key).apply()
+                        dialog.dismiss()
+                        Toast.makeText(this, "Search engine set to ${engine.name}", Toast.LENGTH_SHORT).show()
+                        if (currentPage == "settings") showSettings()
+                    },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        .apply { bottomMargin = dp(12) }
+                )
+            }
+        }
+    }
+
+    // ---- Security Audit ---------------------------------------------------------------
+
+    private fun showSecurityAudit() {
+        val warnings = SecurityPolicy.audit(this)
+        showSheet { sheet, _ ->
+            sheet.addView(label("Security audit", 18f, Palette.TEXT, 1), matchWrap())
+            if (warnings.isEmpty()) {
+                sheet.addView(label(
+                    "✅  No security issues detected on this device.",
+                    15f, Palette.ACCENT
+                ).apply { setPadding(0, dp(12), 0, dp(8)) }, matchWrap())
+                sheet.addView(label(
+                    "Your device passes all Veyra's local security checks. Keep your Android " +
+                        "version and Veyra up to date to maintain this status.",
+                    13f, Palette.MUTED
+                ).apply { setLineSpacing(0f, 1.2f) }, matchWrap())
+            } else {
+                sheet.addView(label(
+                    "${warnings.size} issue${if (warnings.size == 1) "" else "s"} found:",
+                    13f, Palette.MUTED
+                ).apply { setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
+                warnings.forEach { w ->
+                    val card = column().apply {
+                        setPadding(dp(18), dp(16), dp(18), dp(16))
+                        neu(this, 20, Depth.CARD)
+                    }
+                    card.addView(label("⚠️  ${w.title}", 14f, Palette.TEXT, 1))
+                    card.addView(label(w.detail, 13f, Palette.MUTED).apply {
+                        setLineSpacing(0f, 1.2f); setPadding(0, dp(6), 0, 0)
+                    })
+                    sheet.addView(card, lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) })
+                }
+            }
+        }
     }
 
     companion object {
