@@ -72,6 +72,7 @@ class NeuDrawable(
 ) : Drawable() {
     private val fill: Int get() = fillOverride ?: Palette.BG
     private var cache: Bitmap? = null
+    private var cachedFill: Int = 0
     private val extent: Int = if (inset) 0 else ceil(offsetPx + blurPx * 0.9f).toInt()
 
     override fun onBoundsChange(bounds: Rect) {
@@ -81,7 +82,14 @@ class NeuDrawable(
     override fun draw(canvas: Canvas) {
         val b = bounds
         if (b.isEmpty) return
-        val bitmap = cache ?: render(b.width(), b.height()).also { cache = it }
+        val currentFill = fill
+        if (cache != null && cachedFill != currentFill) {
+            cache = null
+        }
+        val bitmap = cache ?: render(b.width(), b.height()).also {
+            cache = it
+            cachedFill = currentFill
+        }
         canvas.drawBitmap(bitmap, (b.left - extent).toFloat(), (b.top - extent).toFloat(), null)
     }
 

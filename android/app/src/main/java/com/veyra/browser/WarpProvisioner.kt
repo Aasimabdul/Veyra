@@ -21,6 +21,8 @@ object WarpProvisioner {
     private val REGISTER_URLS = listOf(
         "https://api.cloudflareclient.com/v0a2158/reg",
         "https://api.cloudflareclient.com/v0a1922/reg",
+        "https://api.cloudflareclient.com/v0a3321/reg",
+        "https://api.cloudflareclient.com/v0a/reg",
         "https://api.cloudflareclient.com/v0i1909051800/reg"
     )
     private const val DEFAULT_PORT = 2408

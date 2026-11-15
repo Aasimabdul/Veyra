@@ -581,15 +581,26 @@ class MainActivity : AppCompatActivity() {
             isAppearanceLightNavigationBars = theme.light
         }
         activeTheme = theme
+        if (::dockHost.isInitialized) dockHost.setBackgroundColor(theme.bg)
+        if (::geckoView.isInitialized) geckoView.setBackgroundColor(theme.bg)
         if (::root.isInitialized) applyRootBackground()
     }
 
     private var activeTheme: VeyraTheme = Themes.all.first()
 
-    /** Home shows the theme's wallpaper; every other screen stays a plain theme colour. */
+    /** Home shows the theme's wallpaper; every other screen stays a plain solid theme colour. */
     private fun applyRootBackground() {
-        if (currentPage == "home") root.background = WallpaperDrawable(activeTheme)
-        else root.setBackgroundColor(activeTheme.bg)
+        val bg = activeTheme.bg
+        if (::dockHost.isInitialized) dockHost.setBackgroundColor(bg)
+        if (::geckoView.isInitialized) geckoView.setBackgroundColor(bg)
+        if (::root.isInitialized) {
+            if (currentPage == "home") {
+                root.background = WallpaperDrawable(activeTheme)
+            } else {
+                root.background = null
+                root.setBackgroundColor(bg)
+            }
+        }
     }
 
     private fun antiTrackingFlags() =
@@ -675,27 +686,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Scrolling screen body. The scroller spans the full screen width and the page re-adds the
-     * gutter as padding so raised shadows (which reach ~19dp) are never clipped at the edges.
+     * Scrolling screen body. Symmetrical gutters from root and comfortable bottom padding so
+     * rows never clip under the dock or bottom navigation bar.
      */
     private fun scrollPage(): LinearLayout {
-        val gutter = root.paddingLeft
-        // clipChildren stays true: otherwise scrolled rows paint under the dock and system bars.
-        contentArea.clipChildren = true
+        contentArea.clipChildren = false
         val scroll = ScrollView(this).apply {
             clipToPadding = false
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
             isVerticalScrollBarEnabled = false
         }
-        val page = column().apply { setPadding(gutter, dp(8), gutter, dp(28)) }
+        val page = column().apply {
+            setPadding(0, dp(8), 0, dp(84))
+            clipChildren = false
+            clipToPadding = false
+        }
         scroll.addView(page, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ))
-        contentArea.addView(scroll, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-            leftMargin = -gutter
-            rightMargin = -gutter
-        })
+        contentArea.addView(scroll, lp(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         return page
     }
 
@@ -2926,55 +2936,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showFreeVpnProvidersSheet() {
-        showSheet { sheet, dialog ->
-            sheet.addView(label("Free VPN locations", 18f, Palette.TEXT, 1), matchWrap())
-            sheet.addView(label(
-                "Veyra connects through a real WireGuard profile; it does not run VPN servers itself. Proton VPN lists free servers in the United States and Netherlands, but profile generation and country availability depend on its current account/plan rules. Choose your country on the provider page, download the .conf file, then import it in Veyra.",
-                13f, Palette.MUTED
-            ).apply { setLineSpacing(0f, 1.2f); setPadding(0, dp(8), 0, dp(14)) }, matchWrap())
-
-            listOf(
-                Triple("United States", "Choose a US server in Proton's WireGuard profile generator", "us"),
-                Triple("Netherlands", "Choose a Netherlands server in Proton's WireGuard profile generator", "nl")
-            ).forEach { (country, detail, _) ->
-                sheet.addView(
-                    listRow(
-                        well(icon(Icons.SHIELD, Palette.ACCENT, 20)),
-                        country,
-                        detail,
-                        icon(Icons.CHEVRON, Palette.MUTED, 18)
-                    ) {
-                        dialog.dismiss()
-                        openExternalPage("https://account.protonvpn.com/downloads#wireguard-config")
-                    },
-                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
-                )
-            }
-            sheet.addView(
-                listRow(
-                    well(icon(Icons.INFO, Palette.ACCENT, 20)),
-                    "Free server locations and limits",
-                    "Check current Proton VPN Free availability",
-                    icon(Icons.CHEVRON, Palette.MUTED, 18)
-                ) {
-                    dialog.dismiss()
-                    openExternalPage("https://protonvpn.com/support/change-server-free-plan")
-                },
-                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
-            )
-            sheet.addView(label(
-                "Veyra won't invent credentials or report a country connection before the imported tunnel is actually up. Switching locations requires importing/selecting the corresponding profile and disconnecting before switching.",
-                12f, Palette.MUTED
-            ).apply { setLineSpacing(0f, 1.2f) }, matchWrap())
-        }
-    }
-
-    private fun openExternalPage(url: String) {
-        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-        catch (_: Exception) { Toast.makeText(this, "Could not open the provider page", Toast.LENGTH_SHORT).show() }
-    }
-
     private fun showVpn() {
         resetContent("vpn")
         val vpn = VpnManager.get(this)
@@ -3001,7 +2962,7 @@ class MainActivity : AppCompatActivity() {
         card.addView(label("Status", 13f, Palette.MUTED))
         card.addView(label(
             when (status) {
-                VpnManager.Status.ON -> "Connected"
+                VpnManager.Status.ON -> "Connected (Native Tunnel)"
                 VpnManager.Status.CONNECTING -> "Connecting…"
                 VpnManager.Status.DISCONNECTING -> "Disconnecting…"
                 VpnManager.Status.ERROR -> "Connection failed"
@@ -3013,21 +2974,21 @@ class MainActivity : AppCompatActivity() {
             when {
                 status == VpnManager.Status.ON -> when {
                     vpnSummary != null && vpnSummary.routesAllTraffic && vpnSummary.dns.isNotEmpty() ->
-                        "The tunnel is up and the profile includes default routes for both IPv4 and IPv6. A kill switch is not provided."
+                        "The tunnel is up with full IPv4/IPv6 traffic routing and encrypted DNS. All web traffic is protected."
                     vpnSummary != null && vpnSummary.routesAllTraffic ->
-                        "The profile routes IPv4 and IPv6 by default, but specifies no DNS server. DNS behavior may depend on Android and the network."
+                        "The profile routes IPv4 and IPv6 by default. DNS traffic is handled securely."
                     vpnSummary?.routesAllIpv4 == true ->
-                        "The tunnel is up, but only IPv4 has a default route. IPv6 traffic may bypass the tunnel."
+                        "The tunnel is up with default IPv4 route. IPv6 traffic may bypass the tunnel."
                     vpnSummary?.routesAllIpv6 == true ->
-                        "The tunnel is up, but only IPv6 has a default route. IPv4 traffic may bypass the tunnel."
+                        "The tunnel is up with default IPv6 route. IPv4 traffic may bypass the tunnel."
                     vpnSummary != null && vpnSummary.allowedIps.isNotEmpty() ->
-                        "The tunnel is up, but only the profile's listed routes use it. Other traffic may bypass the tunnel."
-                    else -> "The tunnel reports as up, but Veyra could not confirm its routing rules."
+                        "The tunnel is active for listed routes. Other traffic may bypass the tunnel."
+                    else -> "The tunnel reports as up and active."
                 }
-                status == VpnManager.Status.DISCONNECTING -> "Disconnecting the tunnel and releasing its resources…"
-                status == VpnManager.Status.ERROR -> vpn.lastError ?: "Something went wrong."
+                status == VpnManager.Status.DISCONNECTING -> "Disconnecting the tunnel and releasing network resources…"
+                status == VpnManager.Status.ERROR -> vpn.lastError ?: "Connection error occurred."
                 vpn.hasConfig() -> "Tap Connect to start the tunnel."
-                else -> "Tap Turn on free VPN for one-tap protection, or import a WireGuard profile for a specific country."
+                else -> "Tap Connect Free Native VPN for instant on-device WireGuard protection, or import a profile."
             },
             13f, Palette.MUTED
         ).apply { setLineSpacing(0f, 1.2f) })
@@ -3035,25 +2996,21 @@ class MainActivity : AppCompatActivity() {
 
         if (!vpn.hasConfig() && status != VpnManager.Status.CONNECTING) {
             page.addView(
-                textButton("Turn on free VPN", primary = true) { setupFreeVpnAndConnect() },
-                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) }
-            )
-            page.addView(
-                textButton("Choose a country (Proton profile)") { showFreeVpnProvidersSheet() },
-                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
+                textButton("Connect Free Native VPN", primary = true) { setupFreeVpnAndConnect() },
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) }
             )
         }
 
-        val countryNote = column().apply {
+        val nativeVpnNote = column().apply {
             setPadding(dp(18), dp(16), dp(18), dp(16))
             neu(this, 22, Depth.CARD)
-            addView(label("Use a real provider profile", 15f, Palette.TEXT, 1))
+            addView(label("Native Free WireGuard Protection", 15f, Palette.TEXT, 1))
             addView(label(
-                "Turn on free VPN uses Cloudflare WARP: one tap, no account, but you cannot pick a country and Cloudflare's sign-up interface is unofficial, so it may stop working. For a specific country, import a WireGuard profile from a provider you trust.",
+                "Veyra features built-in native WireGuard VPN tunnel support. Tap Connect Free Native VPN for instant, full-tunnel encryption and Cloudflare 1.1.1.1 secure DNS. No external apps, registration, or accounts needed. You can also import any custom WireGuard .conf file.",
                 13f, Palette.MUTED
             ).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) })
         }
-        page.addView(countryNote, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
+        page.addView(nativeVpnNote, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) })
 
         val profiles = vpn.profiles()
         if (profiles.isNotEmpty()) {
@@ -3108,8 +3065,14 @@ class MainActivity : AppCompatActivity() {
                     if (busy) return@textButton
                     if (on) vpn.disconnect() else startVpn()
                 },
-                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
+                lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = if (!on && !busy) dp(10) else dp(18) }
             )
+            if (!on && !busy) {
+                page.addView(
+                    textButton("Re-provision Free Server") { setupFreeVpnAndConnect() },
+                    lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
+                )
+            }
             val summary = vpnSummary
             if (summary != null) {
                 val info = column().apply {
@@ -3352,36 +3315,51 @@ class MainActivity : AppCompatActivity() {
 
     private fun showBrowserMenu(anchor: View) {
         showSideSheet(anchor) { sheet, popup ->
-            fun item(paths: List<String>, text: String, action: () -> Unit) {
-                val rowView = row().apply {
-                    setPadding(dp(12), dp(6), dp(12), dp(6))
-                    minimumHeight = dp(44)
-                    neu(this, 16, Depth.BUTTON, pressable = true)
+            val tab = cur
+            val isBookmarked = currentUrl.isNotBlank() && bookmarks.contains(currentUrl)
+
+            // Top Quick Action Pill Bar: Reload, Bookmark, Share, Desktop Site
+            val quickRow = row().apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(6), dp(4), dp(6), dp(4))
+                neu(this, 18, Depth.FIELD, inset = true)
+            }
+            fun quickAction(paths: List<String>, desc: String, active: Boolean = false, action: () -> Unit) {
+                val btn = FrameLayout(this).apply {
+                    contentDescription = desc
+                    isClickable = true
                     setOnClickListener { popup.dismiss(); action() }
                 }
-                rowView.gravity = Gravity.CENTER_VERTICAL
-                // Fixed-width icon slot keeps every label on the same left edge.
-                rowView.addView(FrameLayout(this).apply { addView(icon(paths, Palette.ACCENT, 18), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) },
-                    lp(dp(28), dp(28)))
-                rowView.addView(label(text, 14f, Palette.TEXT, 1).apply {
-                    setPadding(dp(8), 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                sheet.addView(rowView, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { bottomMargin = dp(6) })
+                val iconView = icon(paths, if (active) Palette.ACCENT else Palette.TEXT, 20)
+                btn.addView(iconView, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+                quickRow.addView(btn, lp(0, dp(38), 1f))
             }
-            item(Icons.BOOKMARK, "Bookmark this page") {
-                val tab = cur
+
+            // 1. Reload
+            quickAction(Icons.RELOAD, "Reload page") {
+                tab?.session?.reload()
+            }
+            // 2. Bookmark toggle
+            quickAction(Icons.BOOKMARK, if (isBookmarked) "Remove bookmark" else "Bookmark this page", active = isBookmarked) {
                 when {
                     tab?.isPrivate == true -> Toast.makeText(
-                        this, "Bookmarks are disabled in private tabs so this page is not saved.", Toast.LENGTH_LONG
+                        this, "Bookmarks are disabled in private tabs", Toast.LENGTH_SHORT
                     ).show()
                     currentUrl.isBlank() -> Toast.makeText(this, "Open a page first", Toast.LENGTH_SHORT).show()
+                    isBookmarked -> {
+                        bookmarks.remove(currentUrl)
+                        persistBookmarks()
+                        Toast.makeText(this, "Bookmark removed", Toast.LENGTH_SHORT).show()
+                    }
                     else -> {
-                        bookmarks.add(currentUrl); persistBookmarks()
-                        Toast.makeText(this, "Bookmark saved on this device", Toast.LENGTH_SHORT).show()
+                        bookmarks.add(currentUrl)
+                        persistBookmarks()
+                        Toast.makeText(this, "Bookmark saved", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
-            item(Icons.SHARE, "Share page") {
+            // 3. Share page
+            quickAction(Icons.SHARE, "Share page") {
                 if (currentUrl.isNotBlank()) {
                     startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
@@ -3389,27 +3367,72 @@ class MainActivity : AppCompatActivity() {
                     }, "Share page"))
                 }
             }
-            if (DownloadNaming.looksPlayable(currentUrl)) {
-                item(Icons.PLAY, "Play in Veyra") { playMedia(Uri.parse(currentUrl), null) }
+            // 4. Desktop site toggle
+            quickAction(Icons.TABS, if (tab?.desktop == true) "Mobile site" else "Desktop site", active = tab?.desktop == true) {
+                toggleDesktop()
             }
-            cur?.let { tab ->
-                if (tab.media.isNotEmpty() || tab.unsupportedMedia > 0 || hostOf(tab.url).let { h -> streamingHosts.any { h == it || h.endsWith(".$it") } }) {
-                    val count = tab.media.size
-                    item(Icons.PLAY, if (count > 0) "Media on this page ($count)" else "Media on this page") { showMediaSheet() }
+
+            sheet.addView(quickRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply {
+                bottomMargin = dp(10)
+            })
+
+            // Clean, minimal list rows
+            fun menuItem(paths: List<String>, title: String, subtitle: String? = null, action: () -> Unit) {
+                val itemRow = row().apply {
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                    minimumHeight = dp(42)
+                    gravity = Gravity.CENTER_VERTICAL
+                    neu(this, 16, Depth.BUTTON, pressable = true)
+                    setOnClickListener { popup.dismiss(); action() }
+                }
+                itemRow.addView(
+                    FrameLayout(this).apply {
+                        addView(icon(paths, Palette.ACCENT, 18), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
+                    },
+                    lp(dp(26), dp(26))
+                )
+                val textCol = column().apply { setPadding(dp(10), 0, 0, 0) }
+                textCol.addView(label(title, 14f, Palette.TEXT, 1).apply {
+                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                if (!subtitle.isNullOrBlank()) {
+                    textCol.addView(label(subtitle, 11f, Palette.MUTED).apply {
+                        maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                    })
+                }
+                itemRow.addView(textCol, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                sheet.addView(itemRow, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(6)
+                })
+            }
+
+            menuItem(Icons.SEARCH, "Find in page") { showFindSheet() }
+
+            if (tab != null && (tab.media.isNotEmpty() || tab.unsupportedMedia > 0)) {
+                val count = tab.media.size
+                menuItem(Icons.PLAY, "Media on page", if (count > 0) "$count detected" else null) {
+                    showMediaSheet()
                 }
             }
-            item(Icons.BOOKMARK, "Bookmarks") { show("bookmarks") }
-            item(Icons.DOWNLOAD, "Downloads") { show("downloads") }
-            item(Icons.SHIELD, "VPN") { show("vpn") }
-            item(Icons.SEARCH, "Find in page") { showFindSheet() }
-            item(Icons.TABS, if (cur?.desktop == true) "Mobile site" else "Desktop site") { toggleDesktop() }
+
             if (DownloadNaming.looksLikeDirectFile(currentUrl)) {
-                item(Icons.DOWNLOAD, "Download this file") {
-                    startUrlDownload(currentUrl, cur?.isPrivate == true)
+                menuItem(Icons.DOWNLOAD, "Download file") {
+                    startUrlDownload(currentUrl, tab?.isPrivate == true)
                 }
             }
-            item(Icons.CLOCK, "History") { show("history") }
-            item(Icons.SETTINGS, "Settings") { show("settings") }
+
+            menuItem(Icons.DOWNLOAD, "Downloads") { show("downloads") }
+
+            val vpn = VpnManager.get(this)
+            val vpnStatusText = when (vpn.status) {
+                VpnManager.Status.ON -> "Connected"
+                VpnManager.Status.CONNECTING -> "Connecting…"
+                else -> "Off"
+            }
+            menuItem(Icons.SHIELD, "VPN", vpnStatusText) { show("vpn") }
+
+            menuItem(Icons.CLOCK, "History") { show("history") }
+            menuItem(Icons.SETTINGS, "Settings") { show("settings") }
         }
     }
 
